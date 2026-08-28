@@ -13,7 +13,7 @@ export default function DashboardLayout() {
         setIsLoading(true);
         const timer = setTimeout(() => {
             setIsLoading(false);
-        }, 1000);
+        }, 600);
         return () => clearTimeout(timer);
     }, [location.pathname]);
     return (_jsxs("div", { className: "flex h-screen w-full overflow-hidden bg-[#FFF8F6]", children: [_jsx(Sidebar, { isCollapsed: isSidebarCollapsed }), _jsxs("div", { className: "flex min-w-0 flex-1 flex-col", children: [_jsx(Topbar, { toggleSidebar: () => setIsSidebarCollapsed(!isSidebarCollapsed) }), _jsxs("main", { className: "relative flex-1 overflow-y-auto px-6 py-6", children: [_jsx(Outlet, {}), _jsx(AnimatePresence, { children: isLoading && _jsx(PageLoader, {}) })] })] })] }));

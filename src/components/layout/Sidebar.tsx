@@ -15,10 +15,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { trainer } from "@/data/mockData";
-import { Avatar, avatarUrlFor } from "@/components/ui/Avatar";
+import { Avatar } from "@/components/ui/Avatar";
 import { useAuth } from "@/context/AuthContext";
 import logo from "@/assets/logo.png";
 import favicon from "@/assets/favicon.png";
+
+const TRAINER_PHOTO = "https://randomuser.me/api/portraits/men/51.jpg";
 
 interface NavItem {
   to: string;
@@ -87,7 +89,7 @@ export default function Sidebar({ isCollapsed = false }: SidebarProps) {
         )}
       </div>
 
-      <nav className="flex-1 pl-3 pr-1.5 pb-4 pt-4">
+      <nav className="sidebar-nav-scroll flex-1 overflow-y-auto pl-3 pr-1.5 pb-4 pt-4">
         {sections.map((section, idx) => (
           <div key={idx} className={cn(idx > 0 && (isCollapsed ? "mt-2" : "mt-4"))}>
             {section.label && !isCollapsed && (
@@ -123,7 +125,7 @@ export default function Sidebar({ isCollapsed = false }: SidebarProps) {
       </nav>
 
       <div className={cn("flex border-t border-[#F5E2DA] py-4", isCollapsed ? "flex-col items-center gap-4 px-2" : "items-center gap-3 px-4")}>
-        <Avatar src={avatarUrlFor(trainer.name)} initials={trainer.initials} />
+        <Avatar src={TRAINER_PHOTO} initials={trainer.initials} />
         {!isCollapsed && (
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-[#3A2A22]">{trainer.name}</p>
