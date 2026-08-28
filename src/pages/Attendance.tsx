@@ -12,6 +12,7 @@ import {
   CalendarDays,
   Users,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -23,14 +24,12 @@ import {
   traineesForBatch,
   scheduleForBatch,
   courseById,
-  courses,
 } from "@/data/mockData";
 import type { AttendanceRow, AttendanceStatus } from "@/types";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 4;
 const STATUS_OPTIONS: AttendanceStatus[] = ["P", "A", "L"];
-const ALL = "all";
 
 export default function Attendance() {
   const location = useLocation();
@@ -43,33 +42,15 @@ export default function Attendance() {
   const initialBatchId = requestedBatch ? requestedBatch.id : allBatches[0]?.id ?? "";
   const [selectedBatchId, setSelectedBatchId] = useState(initialBatchId);
 
-  // Course filter narrows which offline batches show up in the selector —
-  // only courses that actually have an offline batch are worth listing.
-  const coursesWithOfflineBatches = useMemo(
-    () => courses.filter((c) => allBatches.some((b) => b.courseId === c.id)),
-    [allBatches]
-  );
-  const [courseFilter, setCourseFilter] = useState<string>(requestedBatch?.courseId ?? ALL);
-  const filteredBatches = useMemo(
-    () => (courseFilter === ALL ? allBatches : allBatches.filter((b) => b.courseId === courseFilter)),
-    [allBatches, courseFilter]
-  );
-
-  function handleCourseFilterChange(value: string) {
-    setCourseFilter(value);
-    const stillVisible = value === ALL ? allBatches : allBatches.filter((b) => b.courseId === value);
-    if (!stillVisible.some((b) => b.id === selectedBatchId)) {
-      setSelectedBatchId(stillVisible[0]?.id ?? "");
-    }
-  }
+  // Attendance is taken per batch, so the batch itself is the filter —
+  // every offline batch is always in play, no course-level narrowing.
+  const filteredBatches = allBatches;
 
   // Deep-linking in from My Courses ("Mark Attendance" on a specific batch)
-  // should jump straight to that batch (and its course filter) even if this
-  // page was already mounted.
+  // should jump straight to that batch even if this page was already mounted.
   useEffect(() => {
     if (requestedBatchId && allBatches.some((b) => b.id === requestedBatchId)) {
       setSelectedBatchId(requestedBatchId);
-      setCourseFilter(requestedBatch?.courseId ?? ALL);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedBatchId]);
@@ -142,19 +123,29 @@ export default function Attendance() {
     }));
   }
 
+  const [finalized, setFinalized] = useState<Record<string, boolean>>({});
+
+  function handleFinalize() {
+    if (!batch) return;
+    setFinalized((prev) => ({ ...prev, [batch.id]: true }));
+    toast.success(`Register finalized for ${batch.code}`);
+  }
+
   const filterBar = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
       <select
-        value={courseFilter}
-        onChange={(e) => handleCourseFilterChange(e.target.value)}
+        value={selectedBatchId}
+        onChange={(e) => setSelectedBatchId(e.target.value)}
         className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
       >
-        <option value={ALL}>All Courses</option>
-        {coursesWithOfflineBatches.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} — {c.level}
-          </option>
-        ))}
+        {allBatches.map((b) => {
+          const c = courseById(b.courseId);
+          return (
+            <option key={b.id} value={b.id}>
+              {b.code} · {b.label} — {c?.name}
+            </option>
+          );
+        })}
       </select>
       <span className="text-xs text-[#B7A79D]">
         {filteredBatches.length} offline batch{filteredBatches.length === 1 ? "" : "es"}
@@ -167,9 +158,7 @@ export default function Attendance() {
       <div className="space-y-5">
         {filterBar}
         <Card>
-          <CardContent className="py-10 text-center text-sm text-[#B7A79D]">
-            {courseFilter === ALL ? "No offline batches are assigned yet." : "No offline batches for this course."}
-          </CardContent>
+          <CardContent className="py-10 text-center text-sm text-[#B7A79D]">No offline batches are assigned yet.</CardContent>
         </Card>
       </div>
     );
@@ -390,9 +379,11 @@ export default function Attendance() {
 
               <Button
                 variant="outline"
-                className="w-full justify-center border-white/40 bg-white text-[#8A442E] hover:bg-white/90"
+                onClick={handleFinalize}
+                disabled={batch ? finalized[batch.id] : false}
+                className="w-full justify-center border-white/40 bg-white text-[#8A442E] hover:bg-white/90 disabled:opacity-90 disabled:cursor-not-allowed"
               >
-                <CheckSquare className="h-4 w-4" /> Finalize Register
+                <CheckSquare className="h-4 w-4" /> {(batch && finalized[batch.id]) ? "Register Finalized" : "Finalize Register"}
               </Button>
             </CardContent>
           </Card>

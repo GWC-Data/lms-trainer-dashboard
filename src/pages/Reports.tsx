@@ -93,16 +93,16 @@ export default function Reports() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[#3A2A22]">Course Reports</h1>
           <p className="text-sm text-[#8C7A70]">Trainee progress, attendance, scores, completion, and feedback history — batch by batch.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-nowrap items-center gap-2">
           <select
             value={courseId}
             onChange={(e) => setCourseId(e.target.value)}
-            className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
+            className="h-10 shrink-0 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
           >
             {courses.map((c) => (
               <option key={c.id} value={c.id}>
@@ -113,7 +113,7 @@ export default function Reports() {
           <select
             value={batchSelection}
             onChange={(e) => setBatchSelection(e.target.value)}
-            className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
+            className="h-10 shrink-0 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
           >
             <option value={ALL_BATCHES}>All batches</option>
             {courseBatches.map((b) => (
