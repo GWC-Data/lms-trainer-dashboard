@@ -130,8 +130,8 @@ export default function Assignments() {
                           {b && course && (
                             <>
                               <span>· {b.code}</span>
-                              <Badge tone={course.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
-                                {course.mode}
+                              <Badge tone={b.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
+                                {b.mode}
                               </Badge>
                             </>
                           )}
@@ -179,8 +179,8 @@ export default function Assignments() {
                           {b && course && (
                             <>
                               <span>· {b.code}</span>
-                              <Badge tone={course.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
-                                {course.mode}
+                              <Badge tone={b.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
+                                {b.mode}
                               </Badge>
                             </>
                           )}

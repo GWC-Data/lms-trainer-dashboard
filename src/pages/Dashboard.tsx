@@ -15,10 +15,12 @@ import { ProgressBar } from "@/components/ui/ProgressBar";
 import Button from "@/components/ui/Button";
 import {
   courses,
+  batches,
   trainees,
   assignments,
   trainer,
   batchesForCourse,
+  courseModes,
   totalTraineesForCourse,
   avgProgressForCourse,
   nextSessionForCourse,
@@ -40,32 +42,39 @@ const attendanceRates = activeOfflineBatches
 const avgAttendanceRate = attendanceRates.length
   ? Math.round(attendanceRates.reduce((sum, r) => sum + r, 0) / attendanceRates.length)
   : 0;
-const primaryOfflineBatch = activeOfflineBatches[0];
+// Prefer whichever offline batch actually has a session today, so adding
+// more offline batches never bumps today's featured session off the card.
+const primaryOfflineBatch =
+  activeOfflineBatches.find((b) => scheduleForBatch(b.id).some((s) => s.isToday)) ?? activeOfflineBatches[0];
 
 const stats = [
   {
     label: "Assigned Courses",
     value: courses.length,
     icon: BookOpen,
-    hint: `${courses.filter((c) => c.mode === "online").length} online · ${courses.filter((c) => c.mode === "offline").length} offline`,
+    hint: `${batches.filter((b) => b.mode === "online").length} online batches · ${batches.filter((b) => b.mode === "offline").length} offline`,
+    chip: "bg-[#FBECE7] text-[#DE896A]",
   },
   {
     label: "Total Trainees",
     value: trainees.length,
     icon: Users,
     hint: `${trainees.filter((t) => t.atRisk).length} flagged at-risk`,
+    chip: "bg-sky-50 text-sky-700",
   },
   {
     label: "Pending Evaluations",
     value: assignments.reduce((sum, a) => sum + a.pendingReview, 0),
     icon: ClipboardCheck,
     hint: "Assignments awaiting review",
+    chip: "bg-violet-50 text-violet-700",
   },
   {
     label: "Avg. Attendance",
     value: `${avgAttendanceRate}%`,
     icon: UserCheck,
     hint: `Across ${activeOfflineBatches.length} offline batch${activeOfflineBatches.length === 1 ? "" : "es"}`,
+    chip: "bg-emerald-50 text-emerald-700",
   },
 ];
 
@@ -74,6 +83,23 @@ export default function Dashboard() {
   let greeting = "Good evening";
   if (hour < 12) greeting = "Good morning";
   else if (hour < 18) greeting = "Good afternoon";
+
+  function isPastSession(item: any) {
+    if (!item.isToday) return false;
+    const match = item.time.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (!match) return false;
+    let hour = parseInt(match[1]);
+    const minute = parseInt(match[2]);
+    const ampm = match[3].toUpperCase();
+    
+    if (ampm === "PM" && hour < 12) hour += 12;
+    if (ampm === "AM" && hour === 12) hour = 0;
+    
+    const now = new Date();
+    if (now.getHours() > hour) return true;
+    if (now.getHours() === hour && now.getMinutes() >= minute) return true;
+    return false;
+  }
 
   return (
     <div className="space-y-6">
@@ -94,7 +120,7 @@ export default function Dashboard() {
                 <p className="mt-1 text-xl font-bold text-[#3A2A22]">{s.value}</p>
                 <p className="mt-1 text-xs text-[#B7A79D]">{s.hint}</p>
               </div>
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FBECE7] text-[#DE896A]">
+              <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${s.chip}`}>
                 <s.icon className="h-5 w-5" />
               </div>
             </CardContent>
@@ -134,10 +160,12 @@ export default function Dashboard() {
                         <p className="text-sm font-semibold text-[#3A2A22]">
                           {c.name} <span className="font-normal text-[#B7A79D]">— {c.level}</span>
                         </p>
-                        <Badge tone={c.mode === "online" ? "blue" : "amber"}>
-                          {c.mode === "online" ? <Laptop className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
-                          {c.mode}
-                        </Badge>
+                        {courseModes(c.id).map((mode) => (
+                          <Badge key={mode} tone={mode === "online" ? "blue" : "amber"}>
+                            {mode === "online" ? <Laptop className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
+                            {mode}
+                          </Badge>
+                        ))}
                         <Badge tone="neutral">
                           {courseBatches.length} batch{courseBatches.length === 1 ? "" : "es"}
                         </Badge>
@@ -173,20 +201,24 @@ export default function Dashboard() {
               )}
             </CardHeader>
             <CardContent className="space-y-4">
-              {(primaryOfflineBatch ? scheduleForBatch(primaryOfflineBatch.id) : []).map((item) => (
-                <div key={item.id} className="flex gap-3">
-                  <div
-                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${item.isToday ? "bg-[#DE896A]" : "bg-[#E9D6CC]"}`}
-                  />
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#B7A79D]">
-                      {item.date} · {item.time}
-                    </p>
-                    <p className="truncate text-[13px] font-medium text-[#3A2A22]">{item.title}</p>
-                    <p className="truncate text-xs text-[#8C7A70]">{item.description}</p>
+              {(primaryOfflineBatch ? scheduleForBatch(primaryOfflineBatch.id) : []).map((item) => {
+                const isPast = isPastSession(item);
+                return (
+                  <div key={item.id} className="flex gap-3">
+                    <div
+                      className={`mt-1 h-2 w-2 shrink-0 rounded-full ${isPast ? "bg-emerald-500" : item.isToday ? "bg-[#DE896A]" : "bg-[#E9D6CC]"}`}
+                    />
+                    <div className="min-w-0">
+                      <p className="flex items-center text-xs font-semibold uppercase tracking-wide text-[#B7A79D]">
+                        {item.date} · {item.time}
+                        {isPast && <span className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] text-emerald-600">Completed</span>}
+                      </p>
+                      <p className={`truncate text-[13px] font-medium text-[#3A2A22] ${isPast ? "opacity-50 line-through" : ""}`}>{item.title}</p>
+                      <p className={`truncate text-xs text-[#8C7A70] ${isPast ? "opacity-50" : ""}`}>{item.description}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
 
@@ -210,8 +242,8 @@ export default function Dashboard() {
                         {batch && course && (
                           <>
                             <span>· {batch.code}</span>
-                            <Badge tone={course.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
-                              {course.mode}
+                            <Badge tone={batch.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
+                              {batch.mode}
                             </Badge>
                           </>
                         )}

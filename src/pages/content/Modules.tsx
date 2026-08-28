@@ -4,7 +4,7 @@ import { Plus, Boxes, ChevronRight, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { courseById } from "@/data/mockData";
+import { courseById, courseModes } from "@/data/mockData";
 import { useContent } from "@/context/ContentContext";
 import AddModuleModal from "@/components/forms/AddModuleModal";
 
@@ -67,7 +67,7 @@ export default function Modules() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
-                  <Badge tone="neutral">{course?.mode}</Badge>
+                  <Badge tone="neutral">{courseModes(m.courseId).join(" + ")}</Badge>
                   <ChevronRight className="h-4 w-4 text-[#C7B6AC]" />
                 </div>
               </div>

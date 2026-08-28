@@ -38,7 +38,6 @@ const ALL_BATCHES = "all";
 export default function Reports() {
   const [courseId, setCourseId] = useState(courses[0].id);
   const [batchSelection, setBatchSelection] = useState<string>(ALL_BATCHES);
-  const course = courses.find((c) => c.id === courseId)!;
   const courseBatches = useMemo(() => batchesForCourse(courseId), [courseId]);
   const selectedBatch = batchSelection === ALL_BATCHES ? null : courseBatches.find((b) => b.id === batchSelection);
 
@@ -75,12 +74,13 @@ export default function Reports() {
   ];
 
   // Attendance only exists for offline batches — never fabricate a number
-  // for a self-paced online batch that never took attendance.
+  // for a self-paced online batch that never took attendance. Mode lives on
+  // the batch, so a mixed course only counts its offline batches here.
   const offlineBatchesInScope = selectedBatch
-    ? course.mode === "offline"
+    ? selectedBatch.mode === "offline"
       ? [selectedBatch]
       : []
-    : courseBatches.filter(() => course.mode === "offline");
+    : courseBatches.filter((b) => b.mode === "offline");
   const attendanceRows = offlineBatchesInScope.flatMap((b) => attendanceForBatch(b.id));
   const attendanceData = [
     { name: "Present", value: attendanceRows.filter((r) => r.status === "P").length },

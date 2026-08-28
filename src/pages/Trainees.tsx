@@ -25,6 +25,7 @@ export default function Trainees() {
   const [query, setQuery] = useState("");
   const [courseFilter, setCourseFilter] = useState<string>(requestedBatch?.courseId ?? ALL);
   const [batchFilter, setBatchFilter] = useState<string>(requestedBatchId ?? ALL);
+  const [modeFilter, setModeFilter] = useState<string>(ALL);
   const [riskOnly, setRiskOnly] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -54,12 +55,13 @@ export default function Trainees() {
       trainees.filter((t) => {
         if (courseFilter !== ALL && t.courseId !== courseFilter) return false;
         if (batchFilter !== ALL && t.batchId !== batchFilter) return false;
+        if (modeFilter !== ALL && batchById(t.batchId)?.mode !== modeFilter) return false;
         if (riskOnly && !t.atRisk) return false;
         if (query.trim() && !t.name.toLowerCase().includes(query.toLowerCase()) && !t.trainerId.toLowerCase().includes(query.toLowerCase()))
           return false;
         return true;
       }),
-    [query, courseFilter, batchFilter, riskOnly]
+    [query, courseFilter, batchFilter, modeFilter, riskOnly]
   );
 
   return (
@@ -111,6 +113,15 @@ export default function Trainees() {
               {b.code} — {b.label}
             </option>
           ))}
+        </select>
+        <select
+          value={modeFilter}
+          onChange={(e) => setModeFilter(e.target.value)}
+          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
+        >
+          <option value={ALL}>All modes</option>
+          <option value="online">Online</option>
+          <option value="offline">Offline</option>
         </select>
         <button
           onClick={() => setRiskOnly((v) => !v)}
@@ -170,8 +181,8 @@ export default function Trainees() {
                         {batch && course && (
                           <span className="ml-1.5 inline-flex items-center gap-1.5 text-xs text-[#B7A79D]">
                             · {batch.code} 
-                            <Badge tone={course.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
-                              {course.mode}
+                            <Badge tone={batch.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
+                              {batch.mode}
                             </Badge>
                           </span>
                         )}

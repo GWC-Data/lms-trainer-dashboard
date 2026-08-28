@@ -3,6 +3,7 @@ import type {
   AttendanceRow,
   Batch,
   Course,
+  DeliveryMode,
   DocumentAsset,
   Lesson,
   Module,
@@ -36,7 +37,6 @@ export const courses: Course[] = [
     name: "Claude Certified Associate",
     level: "Foundational Level",
     category: "Claude Certification",
-    mode: "online",
     domains: 7,
     hours: 60,
     image: associateImg,
@@ -46,7 +46,6 @@ export const courses: Course[] = [
     name: "Claude Certified Developer",
     level: "Foundational Level",
     category: "Claude Certification",
-    mode: "online",
     domains: 6,
     hours: 80,
     image: developerImg,
@@ -56,7 +55,6 @@ export const courses: Course[] = [
     name: "Claude Certified Architect",
     level: "Foundational Level",
     category: "Claude Certification",
-    mode: "online",
     domains: 5,
     hours: 80,
     image: architectFoundationalImg,
@@ -66,7 +64,6 @@ export const courses: Course[] = [
     name: "Claude Certified Architect",
     level: "Professional Level",
     category: "Claude Certification",
-    mode: "offline",
     domains: 7,
     hours: 120,
     image: architectProfessionalImg,
@@ -74,21 +71,34 @@ export const courses: Course[] = [
 ];
 
 // Every batch is an independent run of its course — its own trainees, its
-// own pace, its own progress. Claude Certified Architect (Professional) runs
-// as two parallel offline cohorts here on purpose, to prove the point: same
-// course, different batch, different numbers.
+// own pace, its own progress, and its own delivery mode. Claude Certified
+// Associate runs one batch online (self-paced) and one in person, on purpose,
+// to prove the point: the same course can be online for one cohort and
+// offline for another. Claude Certified Architect (Professional) runs as two
+// parallel offline cohorts, to prove the *other* point: same course, same
+// mode, different batch, different numbers.
 export const batches: Batch[] = [
-  { id: "b1", courseId: "c1", code: "ASSOC-A", label: "August Intake", nextSession: "Self-paced", progress: 74 },
-  { id: "b2", courseId: "c1", code: "ASSOC-B", label: "September Intake", nextSession: "Self-paced", progress: 58 },
-  { id: "b3", courseId: "c2", code: "DEV-A", label: "August Intake", nextSession: "Self-paced", progress: 61 },
-  { id: "b4", courseId: "c2", code: "DEV-B", label: "September Intake", nextSession: "Self-paced", progress: 44 },
-  { id: "b5", courseId: "c3", code: "ARCH-F-A", label: "August Intake", nextSession: "Self-paced", progress: 42 },
-  { id: "b6", courseId: "c3", code: "ARCH-F-B", label: "September Intake", nextSession: "Self-paced", progress: 29 },
+  { id: "b1", courseId: "c1", code: "ASSOC-A", label: "August Intake", mode: "online", nextSession: "Self-paced", progress: 74 },
+  {
+    id: "b2",
+    courseId: "c1",
+    code: "ASSOC-B",
+    label: "September Intake",
+    mode: "offline",
+    location: "Room 4, TeqCertify Bengaluru Campus",
+    nextSession: "14 Sep 2026, 9:00 AM",
+    progress: 58,
+  },
+  { id: "b3", courseId: "c2", code: "DEV-A", label: "August Intake", mode: "online", nextSession: "Self-paced", progress: 61 },
+  { id: "b4", courseId: "c2", code: "DEV-B", label: "September Intake", mode: "online", nextSession: "Self-paced", progress: 44 },
+  { id: "b5", courseId: "c3", code: "ARCH-F-A", label: "August Intake", mode: "online", nextSession: "Self-paced", progress: 42 },
+  { id: "b6", courseId: "c3", code: "ARCH-F-B", label: "September Intake", mode: "online", nextSession: "Self-paced", progress: 29 },
   {
     id: "b7",
     courseId: "c4",
     code: "ARCH-P-01",
     label: "Bengaluru Cohort",
+    mode: "offline",
     location: "Studio 3, TeqCertify Bengaluru Campus",
     nextSession: "10 Sep 2026, 10:00 AM",
     progress: 62,
@@ -98,6 +108,7 @@ export const batches: Batch[] = [
     courseId: "c4",
     code: "ARCH-P-02",
     label: "Hyderabad Cohort",
+    mode: "offline",
     location: "Studio 1, TeqCertify Hyderabad Campus",
     nextSession: "12 Sep 2026, 2:00 PM",
     progress: 41,
@@ -181,6 +192,7 @@ function generateAttendanceRows(
 // Attendance only applies to offline batches — each one keeps its own roster,
 // so the same course's two cohorts can show very different attendance rates.
 export const attendanceRoster: AttendanceRow[] = [
+  ...generateAttendanceRows("b2", 3, 9, "Overslept"),
   ...generateAttendanceRows("b7", 1, 5, "Train delayed"),
   ...generateAttendanceRows("b8", 7, 2, "Traffic delay"),
 ];
@@ -285,6 +297,10 @@ export const schedule: ScheduleItem[] = [
   { id: "sc6", batchId: "b8", date: "SEP 16", time: "2:00 PM", title: "Session 2: Enterprise Integration Strategy", description: "Claude in enterprise systems, gateways, and SSO." },
   { id: "sc7", batchId: "b8", date: "SEP 19", time: "2:00 PM", title: "Session 3: Cost & Performance Optimization", description: "Token budgets, caching strategies, and latency." },
   { id: "sc8", batchId: "b8", date: "SEP 23", time: "2:00 PM", title: "Session 4: Compliance Frameworks", description: "Safety reviews, audit trails, and regulated use." },
+  { id: "sc9", batchId: "b2", date: "SEP 14", time: "9:00 AM", title: "Session 1: Introduction to Claude & LLMs", description: "Model family overview and how LLMs generate text." },
+  { id: "sc10", batchId: "b2", date: "SEP 21", time: "9:00 AM", title: "Session 2: Prompt Engineering Fundamentals", description: "Anatomy of a good prompt and prompting techniques." },
+  { id: "sc11", batchId: "b2", date: "SEP 28", time: "9:00 AM", title: "Session 3: Claude API Essentials", description: "Authentication, parameters, and the Messages API." },
+  { id: "sc12", batchId: "b2", date: "OCT 05", time: "9:00 AM", title: "Session 4: Responsible & Safe AI Use", description: "Safety reviews and everyday best practices." },
 ];
 
 export function courseById(id: string): Course | undefined {
@@ -315,7 +331,15 @@ export function scheduleForBatch(batchId: string): ScheduleItem[] {
 // Every offline batch across every course — this is what the Attendance
 // page lets the trainer switch between.
 export function offlineBatches(): Batch[] {
-  return batches.filter((b) => courseById(b.courseId)?.mode === "offline");
+  return batches.filter((b) => b.mode === "offline");
+}
+
+// The distinct delivery modes a course's batches actually run as — usually
+// one, but a course can run online for one cohort and offline for another.
+// Fixed order so "online" always renders before "offline" when both are present.
+export function courseModes(courseId: string): DeliveryMode[] {
+  const present = new Set(batchesForCourse(courseId).map((b) => b.mode));
+  return (["online", "offline"] as DeliveryMode[]).filter((m) => present.has(m));
 }
 
 export function modulesForCourse(courseId: string): Module[] {

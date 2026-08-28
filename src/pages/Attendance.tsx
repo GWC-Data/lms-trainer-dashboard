@@ -23,26 +23,53 @@ import {
   traineesForBatch,
   scheduleForBatch,
   courseById,
+  courses,
 } from "@/data/mockData";
 import type { AttendanceRow, AttendanceStatus } from "@/types";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 4;
 const STATUS_OPTIONS: AttendanceStatus[] = ["P", "A", "L"];
+const ALL = "all";
 
 export default function Attendance() {
   const location = useLocation();
-  const batches = useMemo(() => offlineBatches(), []);
+  // Every offline batch, across every course — attendance only exists here,
+  // never for a self-paced online batch, so this is the full universe of
+  // batches this page can ever show.
+  const allBatches = useMemo(() => offlineBatches(), []);
   const requestedBatchId = (location.state as { batchId?: string } | null)?.batchId;
-  const initialBatchId =
-    requestedBatchId && batches.some((b) => b.id === requestedBatchId) ? requestedBatchId : batches[0]?.id ?? "";
+  const requestedBatch = requestedBatchId ? allBatches.find((b) => b.id === requestedBatchId) : undefined;
+  const initialBatchId = requestedBatch ? requestedBatch.id : allBatches[0]?.id ?? "";
   const [selectedBatchId, setSelectedBatchId] = useState(initialBatchId);
 
+  // Course filter narrows which offline batches show up in the selector —
+  // only courses that actually have an offline batch are worth listing.
+  const coursesWithOfflineBatches = useMemo(
+    () => courses.filter((c) => allBatches.some((b) => b.courseId === c.id)),
+    [allBatches]
+  );
+  const [courseFilter, setCourseFilter] = useState<string>(requestedBatch?.courseId ?? ALL);
+  const filteredBatches = useMemo(
+    () => (courseFilter === ALL ? allBatches : allBatches.filter((b) => b.courseId === courseFilter)),
+    [allBatches, courseFilter]
+  );
+
+  function handleCourseFilterChange(value: string) {
+    setCourseFilter(value);
+    const stillVisible = value === ALL ? allBatches : allBatches.filter((b) => b.courseId === value);
+    if (!stillVisible.some((b) => b.id === selectedBatchId)) {
+      setSelectedBatchId(stillVisible[0]?.id ?? "");
+    }
+  }
+
   // Deep-linking in from My Courses ("Mark Attendance" on a specific batch)
-  // should jump straight to that batch even if this page was already mounted.
+  // should jump straight to that batch (and its course filter) even if this
+  // page was already mounted.
   useEffect(() => {
-    if (requestedBatchId && batches.some((b) => b.id === requestedBatchId)) {
+    if (requestedBatchId && allBatches.some((b) => b.id === requestedBatchId)) {
       setSelectedBatchId(requestedBatchId);
+      setCourseFilter(requestedBatch?.courseId ?? ALL);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedBatchId]);
@@ -50,7 +77,7 @@ export default function Attendance() {
   // Each offline batch keeps its own roster — edits to one batch's P/A/L
   // marks never bleed into another batch's attendance.
   const [rosterByBatch, setRosterByBatch] = useState<Record<string, AttendanceRow[]>>(() =>
-    Object.fromEntries(batches.map((b) => [b.id, attendanceForBatch(b.id)]))
+    Object.fromEntries(allBatches.map((b) => [b.id, attendanceForBatch(b.id)]))
   );
 
   const [query, setQuery] = useState("");
@@ -61,7 +88,7 @@ export default function Attendance() {
     setPage(0);
   }, [selectedBatchId]);
 
-  const batch = batches.find((b) => b.id === selectedBatchId);
+  const batch = allBatches.find((b) => b.id === selectedBatchId);
   const course = batch ? courseById(batch.courseId) : undefined;
   const roster = rosterByBatch[selectedBatchId] ?? [];
   const batchTrainees = useMemo(
@@ -115,13 +142,36 @@ export default function Attendance() {
     }));
   }
 
+  const filterBar = (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <select
+        value={courseFilter}
+        onChange={(e) => handleCourseFilterChange(e.target.value)}
+        className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
+      >
+        <option value={ALL}>All Courses</option>
+        {coursesWithOfflineBatches.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name} — {c.level}
+          </option>
+        ))}
+      </select>
+      <span className="text-xs text-[#B7A79D]">
+        {filteredBatches.length} offline batch{filteredBatches.length === 1 ? "" : "es"}
+      </span>
+    </div>
+  );
+
   if (!batch || !course) {
     return (
-      <Card>
-        <CardContent className="py-10 text-center text-sm text-[#B7A79D]">
-          No offline batches are assigned yet.
-        </CardContent>
-      </Card>
+      <div className="space-y-5">
+        {filterBar}
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-[#B7A79D]">
+            {courseFilter === ALL ? "No offline batches are assigned yet." : "No offline batches for this course."}
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -129,10 +179,12 @@ export default function Attendance() {
 
   return (
     <div className="space-y-5">
+      {filterBar}
+
       {/* Batch selector — the same course can run as more than one batch */}
-      {batches.length > 1 && (
+      {filteredBatches.length > 1 && (
         <div className="flex gap-3 overflow-x-auto pb-1">
-          {batches.map((b) => {
+          {filteredBatches.map((b) => {
             const c = courseById(b.courseId);
             const isActive = b.id === selectedBatchId;
             return (
@@ -260,8 +312,8 @@ export default function Attendance() {
                               {batch && course && (
                                 <>
                                   <span>· {batch.code}</span>
-                                  <Badge tone={course.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
-                                    {course.mode}
+                                  <Badge tone={batch.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
+                                    {batch.mode}
                                   </Badge>
                                 </>
                               )}

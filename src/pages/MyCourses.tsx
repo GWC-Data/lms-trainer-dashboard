@@ -4,7 +4,7 @@ import { ChevronDown, Laptop, MapPin, Users, Layers, Clock, CalendarClock } from
 import { Badge } from "@/components/ui/Badge";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import Button from "@/components/ui/Button";
-import { courses, batchesForCourse, totalTraineesForCourse, traineesForBatch } from "@/data/mockData";
+import { courses, batchesForCourse, courseModes, totalTraineesForCourse, traineesForBatch } from "@/data/mockData";
 import { cn } from "@/lib/utils";
 
 export default function MyCourses() {
@@ -50,10 +50,12 @@ export default function MyCourses() {
                     <div className="flex flex-col-reverse gap-6 md:flex-row md:items-start">
                       <div className="flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Badge tone={c.mode === "online" ? "blue" : "amber"}>
-                            {c.mode === "online" ? <Laptop className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
-                            {c.mode}
-                          </Badge>
+                          {courseModes(c.id).map((mode) => (
+                            <Badge key={mode} tone={mode === "online" ? "blue" : "amber"}>
+                              {mode === "online" ? <Laptop className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
+                              {mode}
+                            </Badge>
+                          ))}
                           <Badge tone="neutral">
                             {totalTraineesForCourse(c.id)} trainees across {courseBatches.length} batch
                             {courseBatches.length === 1 ? "" : "es"}
@@ -74,13 +76,17 @@ export default function MyCourses() {
                                   <div className="flex items-center gap-2">
                                     <span className="text-sm font-semibold text-[#3A2A22]">{b.code}</span>
                                     <span className="text-xs text-[#B7A79D]">{b.label}</span>
+                                    <Badge tone={b.mode === "online" ? "blue" : "amber"} className="scale-90 origin-left">
+                                      {b.mode === "online" ? <Laptop className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
+                                      {b.mode}
+                                    </Badge>
                                   </div>
                                   <Link
-                                    to={c.mode === "offline" ? "/attendance" : "/trainees"}
+                                    to={b.mode === "offline" ? "/attendance" : "/trainees"}
                                     state={{ batchId: b.id }}
                                     className="text-xs font-medium text-[#DE896A] hover:underline"
                                   >
-                                    {c.mode === "offline" ? "Mark Attendance" : "View Progress"} &rarr;
+                                    {b.mode === "offline" ? "Mark Attendance" : "View Progress"} &rarr;
                                   </Link>
                                 </div>
 
