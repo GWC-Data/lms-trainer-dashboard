@@ -1,0 +1,102 @@
+@keyframes login-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes login-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes login-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes login-float-sm {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(3deg);
+  }
+}
+
+@keyframes login-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(222, 137, 106, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(222, 137, 106, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(222, 137, 106, 0);
+  }
+}
+
+.login-anim-fade-up {
+  opacity: 0;
+  animation: login-fade-in-up 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.login-anim-fade {
+  opacity: 0;
+  animation: login-fade-in 0.8s ease-out both;
+}
+
+.login-anim-pop {
+  opacity: 0;
+  animation: login-pop-in 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.login-anim-float {
+  animation: login-float 5.5s ease-in-out infinite;
+}
+
+.login-anim-float-sm {
+  animation: login-float-sm 4.2s ease-in-out infinite;
+}
+
+.login-anim-pulse-ring {
+  animation: login-pulse-ring 2.4s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-anim-fade-up,
+  .login-anim-fade,
+  .login-anim-pop,
+  .login-anim-float,
+  .login-anim-float-sm,
+  .login-anim-pulse-ring {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

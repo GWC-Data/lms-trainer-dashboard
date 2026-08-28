@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Page background #FFF8F6 */
+    --background: 13 100% 98%;
+    --foreground: 20 30% 16%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 30% 16%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 30% 16%;
+
+    /* Active / primary buttons #DE896A */
+    --primary: 16 64% 64%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 20 55% 96%;
+    --secondary-foreground: 20 30% 22%;
+
+    --muted: 20 45% 95%;
+    --muted-foreground: 20 15% 46%;
+
+    --accent: 16 64% 93%;
+    --accent-foreground: 16 64% 32%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 55% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 20 30% 91%;
+    --input: 20 30% 90%;
+    --ring: 16 64% 64%;
+
+    --radius: 0.9rem;
+
+    --chart-1: 16 64% 64%;
+    --chart-2: 173 45% 40%;
+    --chart-3: 200 60% 55%;
+    --chart-4: 43 74% 62%;
+    --chart-5: 27 87% 67%;
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 20 20% 30%;
+    --sidebar-primary: 16 64% 64%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 16 64% 95%;
+    --sidebar-accent-foreground: 16 64% 40%;
+    --sidebar-border: 20 25% 93%;
+    --sidebar-ring: 16 64% 64%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply text-foreground font-poppins antialiased;
+    background-color: #fff8f6;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #f0c9b9;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #de896a;
+}

@@ -1,0 +1,71 @@
+import { useState } from "react";
+import { toast } from "sonner";
+import { Upload, PlayCircle, Clock, HardDrive } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
+import { courseById } from "@/data/mockData";
+import { useContent } from "@/context/ContentContext";
+import UploadVideoModal from "@/components/forms/UploadVideoModal";
+import type { VideoAsset } from "@/types";
+
+export default function Videos() {
+  const { videos } = useContent();
+  const [modalOpen, setModalOpen] = useState(false);
+
+  function handlePlay(v: VideoAsset) {
+    if (v.fileUrl) {
+      window.open(v.fileUrl, "_blank", "noopener,noreferrer");
+    } else {
+      toast.info("No preview available for this demo video — upload a video to try playback.");
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[#3A2A22]">Videos</h1>
+          <p className="text-sm text-[#8C7A70]">Upload session recordings and reference videos for trainees.</p>
+        </div>
+        <Button onClick={() => setModalOpen(true)}>
+          <Upload className="h-4 w-4" /> Upload Video
+        </Button>
+      </div>
+
+      {videos.length === 0 && <p className="text-sm text-[#B7A79D]">No videos yet — upload one to get started.</p>}
+
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        {videos.map((v) => {
+          const course = courseById(v.courseId);
+          return (
+            <Card key={v.id} className="overflow-hidden">
+              <button
+                onClick={() => handlePlay(v)}
+                className="relative flex h-36 w-full items-center justify-center bg-gradient-to-br from-[#F5D1C4] to-[#FBECE7]"
+              >
+                <PlayCircle className="h-12 w-12 text-white drop-shadow" />
+                <span className="absolute bottom-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                  {v.duration}
+                </span>
+              </button>
+              <CardContent className="p-4">
+                <p className="truncate font-medium text-[#3A2A22]">{v.title}</p>
+                <p className="mt-0.5 truncate text-xs text-[#B7A79D]">{course?.name}</p>
+                <div className="mt-3 flex items-center justify-between text-xs text-[#8C7A70]">
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3.5 w-3.5" /> {v.uploadedAt}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <HardDrive className="h-3.5 w-3.5" /> {v.size}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <UploadVideoModal open={modalOpen} onOpenChange={setModalOpen} />
+    </div>
+  );
+}
