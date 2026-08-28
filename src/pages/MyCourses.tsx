@@ -12,10 +12,6 @@ export default function MyCourses() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-4xl font-extrabold text-[#DE896A] sm:text-5xl">The levels we offer.</h1>
-      </div>
-
       <div className="rounded-3xl bg-[#FAF7F5] p-3 sm:p-4">
         <div className="space-y-3">
           {courses.map((c) => {

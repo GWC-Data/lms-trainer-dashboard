@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { Search, AlertTriangle, Users, ChevronDown, CheckCircle2, CircleDot, Circle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Avatar } from "@/components/ui/Avatar";
+import { Avatar, avatarUrlFor } from "@/components/ui/Avatar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { trainees, courses, courseById, batchById, batchesForCourse, traineeModuleProgress } from "@/data/mockData";
 import type { ModuleStatus } from "@/types";
@@ -158,7 +158,7 @@ export default function Trainees() {
                               isExpanded && "rotate-180 text-[#DE896A]"
                             )}
                           />
-                          <Avatar initials={t.initials} />
+                          <Avatar initials={t.initials} src={avatarUrlFor(t.id)} />
                           <div>
                             <p className="font-medium text-[#3A2A22]">{t.name}</p>
                             <p className="text-xs text-[#B7A79D]">ID: {t.trainerId}</p>

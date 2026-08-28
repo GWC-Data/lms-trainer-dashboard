@@ -8,6 +8,10 @@ export const trainer = {
     initials: "AT",
     email: "alex.thompson@teqcertify.com",
 };
+// The only 4 courses TeqCertify offers — "The levels we offer." A course is
+// shared curriculum; it says nothing about who's enrolled or how far along
+// they are — that all lives on the batches below, because the same course
+// can run as more than one batch at a time.
 export const courses = [
     {
         id: "c1",

@@ -87,7 +87,7 @@ export default function Sidebar({ isCollapsed = false }: SidebarProps) {
         )}
       </div>
 
-      <nav className="flex-1 overflow-y-auto pl-3 pr-1.5 pb-4 pt-4">
+      <nav className="flex-1 pl-3 pr-1.5 pb-4 pt-4">
         {sections.map((section, idx) => (
           <div key={idx} className={cn(idx > 0 && (isCollapsed ? "mt-2" : "mt-4"))}>
             {section.label && !isCollapsed && (

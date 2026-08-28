@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 const PALETTE = [
@@ -14,8 +15,21 @@ function hashIndex(seed: string, mod: number) {
   return h % mod;
 }
 
-export function Avatar({ initials, className }: { initials: string; className?: string }) {
+export function Avatar({ initials, src, className }: { initials: string; src?: string; className?: string }) {
   const tone = PALETTE[hashIndex(initials, PALETTE.length)];
+  const [imgFailed, setImgFailed] = useState(false);
+
+  if (src && !imgFailed) {
+    return (
+      <img
+        src={src}
+        alt={initials}
+        onError={() => setImgFailed(true)}
+        className={cn("h-9 w-9 shrink-0 rounded-full object-cover", className)}
+      />
+    );
+  }
+
   return (
     <div
       className={cn(
@@ -27,4 +41,10 @@ export function Avatar({ initials, className }: { initials: string; className?: 
       {initials}
     </div>
   );
+}
+
+// Deterministic per-person placeholder photo from pravatar.cc — same seed always
+// resolves to the same picture, so a trainee's avatar stays stable across renders.
+export function avatarUrlFor(seed: string, size = 150): string {
+  return `https://i.pravatar.cc/${size}?u=${encodeURIComponent(seed)}`;
 }
