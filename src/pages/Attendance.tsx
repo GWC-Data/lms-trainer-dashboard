@@ -208,9 +208,9 @@ export default function Attendance() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        {/* Left column */}
-        <div className="space-y-5 xl:col-span-2">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        {/* Left Side: Trainee List */}
+        <div className="space-y-5 lg:col-span-2">
           {/* Batch header card */}
           <Card className="relative overflow-hidden border-[#F0DAC9]">
             <div className="absolute inset-0 bg-gradient-to-br from-[#FDF1EA] via-[#FBECE7] to-[#F5D1C4]" />
@@ -380,13 +380,12 @@ export default function Attendance() {
         {/* Right column */}
         <div className="space-y-5">
           <Card className="overflow-hidden border-none bg-gradient-to-br from-[#E38F6C] to-[#C26D4D] text-white">
-            <CardContent className="p-6">
+            <CardContent className="p-6 text-center">
               <p className="text-[11px] font-bold uppercase tracking-wider text-white/80">Session Status</p>
-              <p className="mt-1 text-3xl font-bold">{attendanceRate}%</p>
-              <p className="text-sm text-white/80">Attendance Rate — {batch.code}</p>
+              <p className="mt-1 text-sm text-white/80">Attendance Rate — {batch.code}</p>
 
               <div className="my-5 flex justify-center">
-                <RadialProgress value={attendanceRate} size={104} strokeWidth={9} />
+                <RadialProgress value={attendanceRate} size={112} strokeWidth={9} label={`${attendanceRate}%`} />
               </div>
 
               <Button

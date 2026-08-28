@@ -58,7 +58,7 @@ export function RadialProgress({ value, size = 96, strokeWidth = 8, label, subla
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        {label && <span className="text-lg font-bold text-white leading-none">{label}</span>}
+        {label && <span className="text-3xl font-bold text-white leading-none">{label}</span>}
         {sublabel && <span className="mt-1 text-[10px] text-white/80">{sublabel}</span>}
       </div>
     </div>
