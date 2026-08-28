@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { trainer } from "@/data/mockData";
-import { Avatar } from "@/components/ui/Avatar";
+import { Avatar, avatarUrlFor } from "@/components/ui/Avatar";
 import { useAuth } from "@/context/AuthContext";
 import logo from "@/assets/logo.png";
 import favicon from "@/assets/favicon.png";
@@ -123,7 +123,7 @@ export default function Sidebar({ isCollapsed = false }: SidebarProps) {
       </nav>
 
       <div className={cn("flex border-t border-[#F5E2DA] py-4", isCollapsed ? "flex-col items-center gap-4 px-2" : "items-center gap-3 px-4")}>
-        <Avatar initials={trainer.initials} />
+        <Avatar src={avatarUrlFor(trainer.name)} initials={trainer.initials} />
         {!isCollapsed && (
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-[#3A2A22]">{trainer.name}</p>

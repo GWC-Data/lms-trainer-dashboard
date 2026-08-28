@@ -14,7 +14,7 @@ export default function DashboardLayout() {
     setIsLoading(true);
     const timer = setTimeout(() => {
       setIsLoading(false);
-    }, 1000);
+    }, 600);
     return () => clearTimeout(timer);
   }, [location.pathname]);
 

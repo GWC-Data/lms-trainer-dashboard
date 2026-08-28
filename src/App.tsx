@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider } from "@/context/AuthContext";
 import { ContentProvider } from "@/context/ContentContext";
@@ -21,7 +21,7 @@ export default function App() {
   return (
     <AuthProvider>
       <ContentProvider>
-        <HashRouter>
+        <BrowserRouter>
           <Toaster richColors position="top-right" />
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -42,7 +42,7 @@ export default function App() {
               </Route>
             </Route>
           </Routes>
-        </HashRouter>
+        </BrowserRouter>
       </ContentProvider>
     </AuthProvider>
   );
