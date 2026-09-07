@@ -14,7 +14,6 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { trainer } from "@/data/mockData";
 import { Avatar } from "@/components/ui/Avatar";
 import { useAuth } from "@/context/AuthContext";
 import logo from "@/assets/logo.png";
@@ -71,8 +70,18 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ isCollapsed = false }: SidebarProps) {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
+
+  const trainerName = user
+    ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email
+    : "Trainer";
+
+  const trainerRole = user?.role || "Trainer";
+
+  const trainerInitials = user
+    ? ((user.firstName?.[0] || "") + (user.lastName?.[0] || "")).toUpperCase() || "TR"
+    : "TR";
 
   function handleLogout() {
     logout();
@@ -125,11 +134,11 @@ export default function Sidebar({ isCollapsed = false }: SidebarProps) {
       </nav>
 
       <div className={cn("flex border-t border-[#F5E2DA] py-4", isCollapsed ? "flex-col items-center gap-4 px-2" : "items-center gap-3 px-4")}>
-        <Avatar src={TRAINER_PHOTO} initials={trainer.initials} />
+        <Avatar src={TRAINER_PHOTO} initials={trainerInitials} />
         {!isCollapsed && (
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-[#3A2A22]">{trainer.name}</p>
-            <p className="truncate text-xs text-[#B7A79D]">{trainer.role}</p>
+            <p className="truncate text-sm font-semibold text-[#3A2A22]">{trainerName}</p>
+            <p className="truncate text-xs text-[#B7A79D]">{trainerRole}</p>
           </div>
         )}
         <button

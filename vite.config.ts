@@ -5,7 +5,8 @@ import path from 'path'; // Add this import
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 4000,
+    port: 3000,
+    strictPort: true,
     host: true,
     watch: {
       usePolling: true

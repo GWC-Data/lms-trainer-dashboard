@@ -3,8 +3,13 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/context/AuthContext";
 import { ContentProvider } from "@/context/ContentContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import PublicOnlyRoute from "@/components/auth/PublicOnlyRoute";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import Login from "@/pages/Login";
+import SetPassword from "@/pages/SetPassword";
+import TrainerEmail from "@/pages/TrainerEmail";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
 import MyCourses from "@/pages/MyCourses";
 import Modules from "@/pages/content/Modules";
@@ -24,7 +29,13 @@ export default function App() {
         <BrowserRouter>
           <Toaster richColors position="top-right" />
           <Routes>
-            <Route path="/login" element={<Login />} />
+            <Route element={<PublicOnlyRoute />}>
+              <Route path="/login" element={<Login />} />
+              <Route path="/trainer-email" element={<TrainerEmail />} />
+              <Route path="/set-password" element={<SetPassword />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+            </Route>
 
             <Route element={<ProtectedRoute />}>
               <Route element={<DashboardLayout />}>

@@ -13,12 +13,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import Button from "@/components/ui/Button";
+import { useAuth } from "@/context/AuthContext";
 import {
   courses,
   batches,
   trainees,
   assignments,
-  trainer,
   batchesForCourse,
   courseModes,
   totalTraineesForCourse,
@@ -79,6 +79,10 @@ const stats = [
 ];
 
 export default function Dashboard() {
+  const { user } = useAuth();
+  const trainerFirstName =
+    user?.firstName || (user?.email ? user.email.split("@")[0] : "Trainer");
+
   const hour = new Date().getHours();
   let greeting = "Good evening";
   if (hour < 12) greeting = "Good morning";
@@ -104,7 +108,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-bold text-[#3A2A22]">{greeting}, {trainer.name.split(" ")[0]}</h1>
+        <h1 className="text-xl font-bold text-[#3A2A22]">{greeting}, {trainerFirstName}</h1>
         <p className="text-sm text-[#8C7A70]">
           Here's what's happening across your assigned courses today.
         </p>
@@ -152,9 +156,6 @@ export default function Dashboard() {
                   className="flex flex-col gap-3 rounded-xl border border-[#F5E2DA] p-4 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#FFFBF9] p-1">
-                      <img src={c.image} alt="" className="h-full w-full object-contain" />
-                    </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-semibold text-[#3A2A22]">

@@ -1,57 +1,167 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { trainer } from "@/data/mockData";
+import {
+  loginApi,
+  TOKEN_STORAGE_KEY,
+  USER_STORAGE_KEY,
+  type BackendUser,
+} from "@/services/api";
+import { AxiosError } from "axios";
 
-// Demo-only credentials — this app has no real backend. Shown to the user
-// on the login screen as a hint so the demo is self-explanatory.
-export const DEMO_CREDENTIALS = {
-  email: trainer.email,
-  password: "TeqCertify@2026",
-};
-
-const STORAGE_KEY = "teqcertify_auth";
+export interface User extends BackendUser {}
 
 interface AuthContextValue {
+  user: User | null;
+  token: string | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
-    () => localStorage.getItem(STORAGE_KEY) === "true"
-  );
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      localStorage.setItem(STORAGE_KEY, "true");
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
+function isTokenExpired(token: string | null): boolean {
+  if (!token) return true;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return true;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    const payload = JSON.parse(jsonPayload);
+    if (payload.exp && Date.now() >= payload.exp * 1000) {
+      return true;
     }
-  }, [isAuthenticated]);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [token, setToken] = useState<string | null>(() => {
+    const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (stored && !isTokenExpired(stored)) {
+      return stored;
+    }
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_STORAGE_KEY);
+    return null;
+  });
+
+  const [user, setUser] = useState<User | null>(() => {
+    const storedUser = localStorage.getItem(USER_STORAGE_KEY);
+    const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (storedToken && storedUser && !isTokenExpired(storedToken)) {
+      try {
+        return JSON.parse(storedUser);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  // Periodically check token validity
+  useEffect(() => {
+    if (!token) return;
+    const checkExpiry = () => {
+      if (isTokenExpired(token)) {
+        logout();
+      }
+    };
+    const interval = setInterval(checkExpiry, 60000);
+    return () => clearInterval(interval);
+  }, [token]);
+
+  const logout = () => {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_STORAGE_KEY);
+    setToken(null);
+    setUser(null);
+  };
+
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    setIsLoading(true);
+    try {
+      const response = await loginApi(email, password);
+      const { accessToken, user: backendUser } = response.login;
+
+      // Validate that the user has the TRAINER role
+      const roleName = backendUser.role?.toUpperCase() || "";
+      if (roleName !== "TRAINER") {
+        return {
+          success: false,
+          error: "Access denied. Only trainer accounts can access this dashboard.",
+        };
+      }
+
+      // Store in localStorage
+      localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(backendUser));
+
+      setToken(accessToken);
+      setUser(backendUser);
+      return { success: true };
+    } catch (err: unknown) {
+      if (err instanceof AxiosError) {
+        if (err.response?.status === 401) {
+          return { success: false, error: "Invalid email or password." };
+        }
+        if (err.response?.status === 403) {
+          const msg = (err.response.data as { message?: string })?.message;
+          return {
+            success: false,
+            error: msg || "Account not yet activated. Please check your email for the setup link.",
+          };
+        }
+        if (err.response?.status === 429) {
+          const msg = (err.response.data as { message?: string })?.message;
+          return {
+            success: false,
+            error: msg || "Too many failed login attempts. Please try again later.",
+          };
+        }
+        if (err.response?.data && typeof err.response.data === "object") {
+          const data = err.response.data as { message?: string; error?: string };
+          if (data.message) return { success: false, error: data.message };
+          if (data.error) return { success: false, error: data.error };
+        }
+        if (err.code === "ERR_NETWORK") {
+          return {
+            success: false,
+            error: "Unable to connect to LMS backend server. Please check your connection.",
+          };
+        }
+      }
+      return { success: false, error: "An unexpected error occurred. Please try again." };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const isAuthenticated = useMemo(() => {
+    return Boolean(token && !isTokenExpired(token) && user?.role?.toUpperCase() === "TRAINER");
+  }, [token, user]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
+      user,
+      token,
       isAuthenticated,
-      login: async (email: string, password: string) => {
-        // Simulate a network round-trip so the form's loading state is real.
-        await new Promise((resolve) => setTimeout(resolve, 600));
-
-        const emailMatches = email.trim().toLowerCase() === DEMO_CREDENTIALS.email.toLowerCase();
-        const passwordMatches = password === DEMO_CREDENTIALS.password;
-
-        if (!emailMatches || !passwordMatches) {
-          return { success: false, error: "Invalid email or password." };
-        }
-
-        setIsAuthenticated(true);
-        return { success: true };
-      },
-      logout: () => setIsAuthenticated(false),
+      isLoading,
+      login,
+      logout,
     }),
-    [isAuthenticated]
+    [user, token, isAuthenticated, isLoading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

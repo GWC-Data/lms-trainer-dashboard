@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, Link } from "react-router-dom";
 import {
   Mail,
   Lock,
@@ -8,13 +8,12 @@ import {
   EyeOff,
   AlertCircle,
   Loader2,
-  Sparkles,
   ArrowRight,
   BookOpen,
   Users,
   TrendingUp,
 } from "lucide-react";
-import { useAuth, DEMO_CREDENTIALS } from "@/context/AuthContext";
+import { useAuth } from "@/context/AuthContext";
 import Button from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import logo from "@/assets/logo.png";
@@ -57,11 +56,15 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(
+    (location.state as { email?: string })?.email ?? ""
+  );
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [touched, setTouched] = useState<{ email?: boolean; password?: boolean }>({});
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(
+    (location.state as { error?: string })?.error ?? null
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (isAuthenticated) {
@@ -88,15 +91,16 @@ export default function Login() {
       return;
     }
 
+    // Clean up any temporary auth session flags
+    sessionStorage.removeItem("forgotPasswordSubmitted");
+    sessionStorage.removeItem("passwordResetCompleted");
+    sessionStorage.removeItem("completedResetToken");
+    sessionStorage.removeItem("trainerEmailCompleted");
+    sessionStorage.removeItem("setPasswordCompleted");
+    sessionStorage.removeItem("completedInviteToken");
+
     const redirectTo = (location.state as { from?: { pathname?: string } })?.from?.pathname ?? "/";
     navigate(redirectTo, { replace: true });
-  }
-
-  function fillDemoCredentials() {
-    setEmail(DEMO_CREDENTIALS.email);
-    setPassword(DEMO_CREDENTIALS.password);
-    setTouched({});
-    setSubmitError(null);
   }
 
   return (
@@ -177,7 +181,7 @@ export default function Login() {
             {submitError && (
               <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-600">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                {submitError}
+                <span>{submitError}</span>
               </div>
             )}
 
@@ -212,9 +216,23 @@ export default function Login() {
             </div>
 
             <div>
-              <label htmlFor="password" className="text-xs font-medium text-[#6B5A52]">
-                Password
-              </label>
+              <div className="flex items-center justify-between">
+                <label htmlFor="password" className="text-xs font-medium text-[#6B5A52]">
+                  Password
+                </label>
+                <Link
+                  to="/forgot-password"
+                  replace
+                  onClick={() => {
+                    sessionStorage.removeItem("forgotPasswordSubmitted");
+                    sessionStorage.removeItem("passwordResetCompleted");
+                    sessionStorage.removeItem("completedResetToken");
+                  }}
+                  className="text-xs font-medium text-[#DE896A] hover:underline"
+                >
+                  Forgot Password?
+                </Link>
+              </div>
               <div className="relative mt-1">
                 <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C7B6AC]" />
                 <input
@@ -261,26 +279,25 @@ export default function Login() {
                 </>
               )}
             </Button>
+
+            <div className="pt-2 text-center">
+              <p className="text-xs text-[#8C7A70]">
+                First time logging in?{" "}
+                <Link
+                  to="/trainer-email"
+                  replace
+                  onClick={() => {
+                    sessionStorage.removeItem("trainerEmailCompleted");
+                    sessionStorage.removeItem("setPasswordCompleted");
+                    sessionStorage.removeItem("completedInviteToken");
+                  }}
+                  className="font-semibold text-[#DE896A] hover:underline"
+                >
+                  Activate account
+                </Link>
+              </p>
+            </div>
           </form>
-
-          <div className="my-5 flex items-center gap-3">
-            <div className="h-px flex-1 bg-[#F0DED4]" />
-            <span className="text-xs text-[#C7B6AC]">or</span>
-            <div className="h-px flex-1 bg-[#F0DED4]" />
-          </div>
-
-          <button
-            type="button"
-            onClick={fillDemoCredentials}
-            className="login-anim-pulse-ring flex w-full items-center gap-2 rounded-xl border border-dashed border-[#EEAF9C] bg-[#FFFBF9] px-3 py-2.5 text-left text-xs text-[#8C7A70] hover:bg-[#FBECE7]"
-          >
-            <Sparkles className="h-3.5 w-3.5 shrink-0 text-[#DE896A]" />
-            <span>
-              Demo credentials — <span className="font-medium text-[#3A2A22]">{DEMO_CREDENTIALS.email}</span> ·{" "}
-              <span className="font-medium text-[#3A2A22]">{DEMO_CREDENTIALS.password}</span>{" "}
-              <span className="text-[#DE896A]">(tap to fill)</span>
-            </span>
-          </button>
         </div>
 
         <p className="login-anim-fade text-xs text-[#C7B6AC]" style={{ animationDelay: "300ms" }}>
