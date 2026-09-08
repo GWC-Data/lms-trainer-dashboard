@@ -22,8 +22,6 @@ export function Avatar({ initials, src, className }) {
     }
     return (_jsx("div", { className: cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold", tone, className), children: initials }));
 }
-// Deterministic per-person placeholder photo from pravatar.cc — same seed always
-// resolves to the same picture, so a trainee's avatar stays stable across renders.
 export function avatarUrlFor(seed, size = 150) {
     return `https://i.pravatar.cc/${size}?u=${encodeURIComponent(seed)}`;
 }
