@@ -3,8 +3,7 @@ import {
   LayoutGrid,
   BookOpen,
   Boxes,
-  FileText,
-  Video,
+  // FileText, // Lessons temporarily disabled
   File,
   ClipboardList,
   PencilLine,
@@ -43,9 +42,8 @@ const sections: NavSection[] = [
     label: "Content Management",
     items: [
       { to: "/content/modules", label: "Modules", icon: Boxes },
-      { to: "/content/lessons", label: "Lessons", icon: FileText },
-      { to: "/content/videos", label: "Videos", icon: Video },
-      { to: "/content/documents", label: "Documents", icon: File },
+      // { to: "/content/lessons", label: "Lessons", icon: FileText }, // Temporarily disabled
+      { to: "/content/documents", label: "Materials", icon: File },
     ],
   },
   {

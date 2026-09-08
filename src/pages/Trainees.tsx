@@ -1,68 +1,152 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { Search, AlertTriangle, Users, ChevronDown, CheckCircle2, CircleDot, Circle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Avatar, avatarUrlFor } from "@/components/ui/Avatar";
+import { Avatar } from "@/components/ui/Avatar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { trainees, courses, courseById, batchById, batchesForCourse, traineeModuleProgress } from "@/data/mockData";
-import type { ModuleStatus } from "@/types";
+import {
+  getTrainerBatchesApi,
+  getTrainerCoursesApi,
+  getTraineesApi,
+  getTraineeDetailsApi,
+  type BackendBatchItem,
+  type TrainerCourseItem,
+  type TraineeListItem,
+} from "@/services/api";
 import { cn } from "@/lib/utils";
-
-const STATUS_META: Record<ModuleStatus, { icon: typeof CheckCircle2; className: string; label: string }> = {
-  completed: { icon: CheckCircle2, className: "text-emerald-600", label: "Completed" },
-  "in-progress": { icon: CircleDot, className: "text-[#DE896A]", label: "In progress" },
-  "not-started": { icon: Circle, className: "text-[#D8C7BE]", label: "Not started" },
-};
 
 const ALL = "all";
 
 export default function Trainees() {
   const location = useLocation();
   const requestedBatchId = (location.state as { batchId?: string } | null)?.batchId;
-  const requestedBatch = requestedBatchId ? batchById(requestedBatchId) : undefined;
+
+  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
+  const [loadingSelectors, setLoadingSelectors] = useState(true);
 
   const [query, setQuery] = useState("");
-  const [courseFilter, setCourseFilter] = useState<string>(requestedBatch?.courseId ?? ALL);
+  const [courseFilter, setCourseFilter] = useState<string>(ALL);
   const [batchFilter, setBatchFilter] = useState<string>(requestedBatchId ?? ALL);
   const [modeFilter, setModeFilter] = useState<string>(ALL);
   const [riskOnly, setRiskOnly] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Deep-linking in from My Courses ("View Progress" on a specific batch)
-  // should jump straight to that course + batch even if this page was
-  // already mounted.
+  const [trainees, setTrainees] = useState<TraineeListItem[]>([]);
+  const [loadingTrainees, setLoadingTrainees] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedDetails, setExpandedDetails] = useState<Record<string, any>>({});
+  const [loadingDetails, setLoadingDetails] = useState<Record<string, boolean>>({});
+
+  // 1. Load real courses and real batches
   useEffect(() => {
-    if (requestedBatchId && requestedBatch) {
-      setCourseFilter(requestedBatch.courseId);
-      setBatchFilter(requestedBatchId);
+    let mounted = true;
+    async function loadSelectors() {
+      try {
+        setLoadingSelectors(true);
+        const [coursesRes, batchesData] = await Promise.all([
+          getTrainerCoursesApi(),
+          getTrainerBatchesApi(),
+        ]);
+        if (!mounted) return;
+        const cList = coursesRes.courses || [];
+        setCourses(cList);
+        setBatches(batchesData || []);
+
+        if (requestedBatchId) {
+          const match = (batchesData || []).find((b) => b.id === requestedBatchId);
+          if (match) {
+            setBatchFilter(match.id);
+            if (match.courseId) setCourseFilter(match.courseId);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load course/batch selectors:", err);
+      } finally {
+        if (mounted) setLoadingSelectors(false);
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadSelectors();
+    return () => {
+      mounted = false;
+    };
   }, [requestedBatchId]);
 
-  const batchOptions = useMemo(
-    () => (courseFilter === ALL ? [] : batchesForCourse(courseFilter)),
-    [courseFilter]
-  );
-
-  function handleCourseChange(value: string) {
-    setCourseFilter(value);
-    setBatchFilter(ALL); // a batch id from the old course wouldn't apply here
+  // Rule 2: When Batch is selected, Course must match that Batch's real courseId
+  function handleBatchChange(selectedId: string) {
+    setBatchFilter(selectedId);
+    if (selectedId === ALL) {
+      setCourseFilter(ALL);
+    } else {
+      const b = batches.find((item) => item.id === selectedId);
+      const targetCourseId = b?.courseId || b?.course?.id || "";
+      setCourseFilter(targetCourseId);
+    }
   }
 
-  const filtered = useMemo(
-    () =>
-      trainees.filter((t) => {
-        if (courseFilter !== ALL && t.courseId !== courseFilter) return false;
-        if (batchFilter !== ALL && t.batchId !== batchFilter) return false;
-        if (modeFilter !== ALL && batchById(t.batchId)?.mode !== modeFilter) return false;
-        if (riskOnly && !t.atRisk) return false;
-        if (query.trim() && !t.name.toLowerCase().includes(query.toLowerCase()) && !t.trainerId.toLowerCase().includes(query.toLowerCase()))
-          return false;
-        return true;
-      }),
-    [query, courseFilter, batchFilter, modeFilter, riskOnly]
-  );
+  function handleCourseChange(selectedId: string) {
+    setCourseFilter(selectedId);
+    // If current batch does not belong to this new course, reset batch
+    if (selectedId !== ALL && batchFilter !== ALL) {
+      const b = batches.find((item) => item.id === batchFilter);
+      if (b && b.courseId !== selectedId) {
+        setBatchFilter(ALL);
+      }
+    }
+  }
+
+  // Available batches based on course filter
+  const availableBatches = useMemo(() => {
+    if (courseFilter === ALL) return batches;
+    return batches.filter((b) => b.courseId === courseFilter);
+  }, [batches, courseFilter]);
+
+  // 2. Fetch real trainees based on filters
+  const fetchTrainees = useCallback(async () => {
+    try {
+      setLoadingTrainees(true);
+      const res = await getTraineesApi({
+        courseId: courseFilter !== ALL ? courseFilter : undefined,
+        batchId: batchFilter !== ALL ? batchFilter : undefined,
+        search: query.trim() || undefined,
+        mode: modeFilter !== ALL ? modeFilter : undefined,
+        atRisk: riskOnly || undefined,
+      });
+      setTrainees(res.data?.trainees || []);
+    } catch (err) {
+      console.error("Failed to load trainees list:", err);
+      setTrainees([]);
+    } finally {
+      setLoadingTrainees(false);
+    }
+  }, [courseFilter, batchFilter, query, modeFilter, riskOnly]);
+
+  useEffect(() => {
+    fetchTrainees();
+  }, [fetchTrainees]);
+
+  // 3. Lazy fetch trainee details on expand
+  const handleToggleExpand = async (rowKey: string, traineeId: string) => {
+    if (expandedId === rowKey) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(rowKey);
+
+    if (!expandedDetails[traineeId]) {
+      try {
+        setLoadingDetails((prev) => ({ ...prev, [traineeId]: true }));
+        const res = await getTraineeDetailsApi(traineeId);
+        if (res.success && res.data) {
+          setExpandedDetails((prev) => ({ ...prev, [traineeId]: res.data }));
+        }
+      } catch (err) {
+        console.error("Failed to fetch trainee details:", err);
+      } finally {
+        setLoadingDetails((prev) => ({ ...prev, [traineeId]: false }));
+      }
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -85,35 +169,56 @@ export default function Trainees() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name or ID..."
+            placeholder="Search by name or email..."
             className="h-10 w-full rounded-xl border border-[#F0DED4] bg-white pl-9 pr-3 text-sm text-[#3A2A22] placeholder:text-[#C7B6AC] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
           />
         </div>
-        <select
-          value={courseFilter}
-          onChange={(e) => handleCourseChange(e.target.value)}
-          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
-        >
-          <option value={ALL}>All Courses</option>
-          {courses.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name} — {c.level}
-            </option>
-          ))}
-        </select>
+
+        {/* Batch filter: Primary Starting Point (ALL real batches) */}
         <select
           value={batchFilter}
-          onChange={(e) => setBatchFilter(e.target.value)}
-          disabled={courseFilter === ALL}
-          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20 disabled:cursor-not-allowed disabled:opacity-50"
+          onChange={(e) => handleBatchChange(e.target.value)}
+          disabled={loadingSelectors}
+          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
         >
-          <option value={ALL}>All batches</option>
-          {batchOptions.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.code} — {b.label}
+          <option value={ALL}>All Batches</option>
+          {batches.map((b, idx) => (
+            <option key={`${b.id}-${idx}`} value={b.id}>
+              {b.batchName}
             </option>
           ))}
         </select>
+
+        {/* Course filter: Strictly resolved from selected Batch */}
+        <select
+          value={courseFilter}
+          onChange={(e) => setCourseFilter(e.target.value)}
+          disabled={loadingSelectors || batchFilter !== ALL}
+          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
+        >
+          {batchFilter === ALL ? (
+            <>
+              <option value={ALL}>All Courses</option>
+              {courses.map((c, idx) => (
+                <option key={`${c.id}-${idx}`} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </>
+          ) : (
+            (() => {
+              const matchedCourse = courses.find((c) => c.id === courseFilter);
+              const b = batches.find((item) => item.id === batchFilter);
+              const cName = matchedCourse?.name || b?.course?.courseName;
+              return cName ? (
+                <option value={courseFilter}>{cName} 🔒</option>
+              ) : (
+                <option value="">No course found for this batch</option>
+              );
+            })()
+          )}
+        </select>
+
         <select
           value={modeFilter}
           onChange={(e) => setModeFilter(e.target.value)}
@@ -123,11 +228,14 @@ export default function Trainees() {
           <option value="online">Online</option>
           <option value="offline">Offline</option>
         </select>
+
         <button
           onClick={() => setRiskOnly((v) => !v)}
           className={cn(
             "flex h-10 items-center gap-1.5 rounded-xl border px-3 text-sm font-medium transition-colors",
-            riskOnly ? "border-red-200 bg-red-50 text-red-600" : "border-[#F0DED4] bg-white text-[#8C7A70] hover:bg-[#FBECE7]"
+            riskOnly
+              ? "border-red-200 bg-red-50 text-red-600"
+              : "border-[#F0DED4] bg-white text-[#8C7A70] hover:bg-[#FBECE7]"
           )}
         >
           <AlertTriangle className="h-4 w-4" /> At-risk only
@@ -148,115 +256,160 @@ export default function Trainees() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F5E2DA]">
-              {filtered.map((t) => {
-                const course = courseById(t.courseId);
-                const batch = batchById(t.batchId);
-                const isExpanded = expandedId === t.id;
-                const moduleProgress = isExpanded ? traineeModuleProgress(t) : [];
-                const completedCount = moduleProgress.filter((mp) => mp.status === "completed").length;
+              {loadingTrainees ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-10 text-center text-sm text-[#B7A79D]">
+                    Loading trainees from BigQuery...
+                  </td>
+                </tr>
+              ) : trainees.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-10 text-center text-sm text-[#B7A79D]">
+                    No trainees match these filters.
+                  </td>
+                </tr>
+              ) : (
+                trainees.map((t, idx) => {
+                  const traineeId = t.id || (t as any).traineeId || `tr-${idx}`;
+                  const rowKey = `${traineeId}-${t.batchId || "nobatch"}-${idx}`;
+                  const isExpanded = expandedId === rowKey;
+                  const displayName = t.name || (t as any).fullName || "Trainee";
+                  const initials = displayName
+                    .split(" ")
+                    .filter(Boolean)
+                    .map((n: string) => n[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase() || "TR";
 
-                return (
-                  <Fragment key={t.id}>
-                    <tr
-                      onClick={() => setExpandedId(isExpanded ? null : t.id)}
-                      className={cn("cursor-pointer hover:bg-[#FFFBF9]", isExpanded && "bg-[#FFFBF9]")}
-                    >
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <ChevronDown
-                            className={cn(
-                              "h-4 w-4 shrink-0 text-[#C7B6AC] transition-transform duration-200",
-                              isExpanded && "rotate-180 text-[#DE896A]"
-                            )}
-                          />
-                          <Avatar initials={t.initials} src={avatarUrlFor(t.id)} />
-                          <div>
-                            <p className="font-medium text-[#3A2A22]">{t.name}</p>
-                            <p className="text-xs text-[#B7A79D]">ID: {t.trainerId}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-[#6B5A52]">
-                        {course?.name}
-                        {batch && course && (
-                          <span className="ml-1.5 inline-flex items-center gap-1.5 text-xs text-[#B7A79D]">
-                            · {batch.code} 
-                            <Badge tone={batch.mode === "online" ? "blue" : "amber"} className="scale-75 origin-left px-1.5 py-0">
-                              {batch.mode}
-                            </Badge>
-                          </span>
+                  const details = expandedDetails[traineeId];
+                  const isLoadingDetail = loadingDetails[traineeId];
+                  const enrollments = details?.enrollments || [];
+
+                  return (
+                    <Fragment key={rowKey}>
+                      <tr
+                        onClick={() => handleToggleExpand(rowKey, traineeId)}
+                        className={cn(
+                          "cursor-pointer hover:bg-[#FFFBF9]",
+                          isExpanded && "bg-[#FFFBF9]"
                         )}
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          <ProgressBar value={t.lessonCompletion} className="w-24" />
-                          <span className="text-xs text-[#8C7A70]">{t.lessonCompletion}%</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className={cn("text-sm font-medium", t.quizScore < 60 ? "text-red-500" : "text-[#3A2A22]")}>
-                          {t.quizScore}%
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className={cn("text-sm font-medium", t.attendance < 75 ? "text-red-500" : "text-[#3A2A22]")}>
-                          {t.attendance}%
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        {t.atRisk ? (
-                          <Badge tone="red">
-                            <AlertTriangle className="h-3 w-3" /> at risk
-                          </Badge>
-                        ) : (
-                          <Badge tone="green">on track</Badge>
-                        )}
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr className="bg-[#FFFBF9]">
-                        <td colSpan={6} className="px-5 pb-5 pt-0">
-                          <div className="rounded-xl border border-[#F0DED4] bg-white p-4">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-[#B7A79D]">
-                                Every module in this batch — {course?.name} ({batch?.code ?? "self-paced"})
-                              </p>
-                              <span className="text-xs font-medium text-[#8C7A70]">
-                                {completedCount}/{moduleProgress.length} modules completed
-                              </span>
-                            </div>
-                            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                              {moduleProgress.map(({ module, status }) => {
-                                const meta = STATUS_META[status];
-                                return (
-                                  <div
-                                    key={module.id}
-                                    className="flex items-center gap-2 rounded-lg bg-[#FFFBF9] px-3 py-2"
-                                  >
-                                    <meta.icon className={cn("h-4 w-4 shrink-0", meta.className)} />
-                                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-[#3A2A22]">
-                                      {module.title}
-                                    </span>
-                                    <span className={cn("shrink-0 text-[10px] font-semibold", meta.className)}>
-                                      {meta.label}
-                                    </span>
-                                  </div>
-                                );
-                              })}
+                      >
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2">
+                            <ChevronDown
+                              className={cn(
+                                "h-4 w-4 shrink-0 text-[#C7B6AC] transition-transform duration-200",
+                                isExpanded && "rotate-180 text-[#DE896A]"
+                              )}
+                            />
+                            <Avatar initials={initials} />
+                            <div>
+                              <p className="font-medium text-[#3A2A22]">{t.name}</p>
+                              <p className="text-xs text-[#B7A79D]">{t.email}</p>
                             </div>
                           </div>
                         </td>
+                        <td className="px-5 py-3 text-[#6B5A52]">
+                          {t.courseName}
+                          <span className="ml-1.5 inline-flex items-center gap-1.5 text-xs text-[#B7A79D]">
+                            · {t.batchName}
+                            <Badge
+                              tone={t.mode === "online" ? "blue" : "amber"}
+                              className="scale-75 origin-left px-1.5 py-0"
+                            >
+                              {t.mode}
+                            </Badge>
+                          </span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="flex items-center gap-2">
+                            <ProgressBar value={t.progressPct} className="w-24" />
+                            <span className="text-xs text-[#8C7A70]">{t.progressPct}%</span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          <span
+                            className={cn(
+                              "text-sm font-medium",
+                              t.quizAvgScore < 60 ? "text-red-500" : "text-[#3A2A22]"
+                            )}
+                          >
+                            {t.quizAvgScore}%
+                          </span>
+                        </td>
+                        <td className="px-5 py-3">
+                          <span
+                            className={cn(
+                              "text-sm font-medium",
+                              t.attendancePct < 75 ? "text-red-500" : "text-[#3A2A22]"
+                            )}
+                          >
+                            {t.attendancePct}%
+                          </span>
+                        </td>
+                        <td className="px-5 py-3">
+                          {t.isAtRisk ? (
+                            <Badge tone="red">
+                              <AlertTriangle className="h-3 w-3" /> at risk
+                            </Badge>
+                          ) : (
+                            <Badge tone="green">on track</Badge>
+                          )}
+                        </td>
                       </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
+                      {isExpanded && (
+                        <tr className="bg-[#FFFBF9]">
+                          <td colSpan={6} className="px-5 pb-5 pt-0">
+                            <div className="rounded-xl border border-[#F0DED4] bg-white p-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-[#B7A79D]">
+                                  Modules & Lessons in Enrolled Batch — {t.courseName} ({t.batchName})
+                                </p>
+                                <span className="text-xs font-medium text-[#8C7A70]">
+                                  {t.completedLessons}/{t.totalLessons} lessons completed
+                                </span>
+                              </div>
+
+                              {isLoadingDetail ? (
+                                <p className="mt-3 text-xs text-[#B7A79D]">Loading module hierarchy...</p>
+                              ) : enrollments.length === 0 ? (
+                                <p className="mt-3 text-xs text-[#B7A79D]">No module details available.</p>
+                              ) : (
+                                <div className="mt-3 space-y-3">
+                                  {enrollments.map((enr: any, eIdx: number) => (
+                                    <div key={`${enr.batchId || enr.courseId || "enr"}-${eIdx}`} className="space-y-2">
+                                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                        {(enr.modules || []).map((m: any, mIdx: number) => (
+                                          <div
+                                            key={`${m.moduleId || "mod"}-${mIdx}`}
+                                            className="flex items-center gap-2 rounded-lg bg-[#FFFBF9] px-3 py-2"
+                                          >
+                                            <CircleDot className="h-4 w-4 shrink-0 text-[#DE896A]" />
+                                            <span className="min-w-0 flex-1 truncate text-xs font-medium text-[#3A2A22]">
+                                              {m.moduleName}
+                                            </span>
+                                            <span className="shrink-0 text-[10px] font-semibold text-[#8C7A70]">
+                                              {(m.lessons || []).length} lessons
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
-        {filtered.length === 0 && (
-          <CardContent className="py-10 text-center text-sm text-[#B7A79D]">No trainees match these filters.</CardContent>
-        )}
       </Card>
     </div>
   );

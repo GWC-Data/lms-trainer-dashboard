@@ -97,11 +97,21 @@ export interface Quiz {
   id: string;
   title: string;
   courseId: string;
+  batchId?: string;
+  moduleId?: string;
+  courseName?: string;
+  batchName?: string;
+  moduleName?: string;
+  trainerName?: string;
   questions: number;
+  totalQuestions?: number;
   submissions: number;
   totalTrainees: number;
   avgScore: number;
   status: "draft" | "published";
+  fileUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Assignment {

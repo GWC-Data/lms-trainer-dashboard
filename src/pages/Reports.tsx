@@ -11,21 +11,17 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { MessageSquareText, TrendingUp, Users2, CalendarX2 } from "lucide-react";
+import { TrendingUp, Users2, CalendarX2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Badge } from "@/components/ui/Badge";
 import { RadialProgress } from "@/components/ui/ProgressBar";
-import { Avatar } from "@/components/ui/Avatar";
 import {
-  courses,
-  trainees,
-  quizzes,
-  submissions,
-  batchesForCourse,
-  traineesForBatch,
-  attendanceForBatch,
-  avgProgressForCourse,
-} from "@/data/mockData";
+  getTrainerCoursesApi,
+  getTrainerBatchesApi,
+  getTraineesApi,
+  type TrainerCourseItem,
+  type BackendBatchItem,
+  type TraineeListItem,
+} from "@/services/api";
 
 const STATUS_COLORS: Record<string, string> = {
   Present: "#DE896A",
@@ -36,226 +32,305 @@ const STATUS_COLORS: Record<string, string> = {
 const ALL_BATCHES = "all";
 
 export default function Reports() {
-  const [courseId, setCourseId] = useState(courses[0].id);
-  const [batchSelection, setBatchSelection] = useState<string>(ALL_BATCHES);
-  const courseBatches = useMemo(() => batchesForCourse(courseId), [courseId]);
-  const selectedBatch = batchSelection === ALL_BATCHES ? null : courseBatches.find((b) => b.id === batchSelection);
+  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
+  const [loadingSelectors, setLoadingSelectors] = useState(true);
 
-  // Switching courses resets the batch selection back to "all batches" —
-  // a batch id from the old course wouldn't mean anything for the new one.
+  const [selectedBatchId, setSelectedBatchId] = useState<string>("");
+
+  const [trainees, setTrainees] = useState<TraineeListItem[]>([]);
+  const [loadingTrainees, setLoadingTrainees] = useState(false);
+
+  // 1. Fetch real batches and real courses from BigQuery
   useEffect(() => {
-    setBatchSelection(ALL_BATCHES);
-  }, [courseId]);
+    let mounted = true;
+    async function loadData() {
+      try {
+        setLoadingSelectors(true);
+        const [cRes, bData] = await Promise.all([
+          getTrainerCoursesApi(),
+          getTrainerBatchesApi(),
+        ]);
+        if (!mounted) return;
+        const cList = cRes.courses || [];
+        const bList = bData || [];
+        setCourses(cList);
+        setBatches(bList);
+        if (bList.length > 0) {
+          setSelectedBatchId(bList[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load report selectors:", err);
+      } finally {
+        if (mounted) setLoadingSelectors(false);
+      }
+    }
+    loadData();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
-  const scopeTrainees = useMemo(
-    () => (selectedBatch ? traineesForBatch(selectedBatch.id) : trainees.filter((t) => t.courseId === courseId)),
-    [selectedBatch, courseId]
+  const selectedBatch = useMemo(
+    () => batches.find((b) => b.id === selectedBatchId),
+    [batches, selectedBatchId]
   );
-  const courseQuizzes = useMemo(() => quizzes.filter((q) => q.courseId === courseId), [courseId]);
-  const feedbackLog = useMemo(
-    () => submissions.filter((s) => s.status === "reviewed" && s.feedback),
-    []
+
+  const targetCourseId = selectedBatch?.courseId || selectedBatch?.course?.id || "";
+
+  const selectedCourse = useMemo(
+    () => courses.find((c) => c.id === targetCourseId),
+    [courses, targetCourseId]
   );
 
-  const avgCompletion = Math.round(
-    scopeTrainees.reduce((sum, t) => sum + t.lessonCompletion, 0) / (scopeTrainees.length || 1)
-  );
+  const courseDisplayName =
+    selectedCourse?.courseName ||
+    selectedCourse?.name ||
+    selectedBatch?.course?.courseName ||
+    (targetCourseId ? "Associated Course" : "No course found for this batch");
 
-  const completionRate = selectedBatch ? selectedBatch.progress : avgProgressForCourse(courseId);
-  const completionLabel = selectedBatch
-    ? `Batch ${selectedBatch.code}`
-    : `Average across ${courseBatches.length} batch${courseBatches.length === 1 ? "" : "es"}`;
+  // 2. Fetch real trainees in scope of selected Batch + resolved Course
+  useEffect(() => {
+    let mounted = true;
+    async function loadTrainees() {
+      if (!selectedBatchId) {
+        setTrainees([]);
+        return;
+      }
+      try {
+        setLoadingTrainees(true);
+        const res = await getTraineesApi({
+          batchId: selectedBatchId,
+          courseId: targetCourseId || undefined,
+        });
+        if (!mounted) return;
+        setTrainees(res.data?.trainees || []);
+      } catch (err) {
+        console.error("Failed to load trainees for report:", err);
+        if (mounted) setTrainees([]);
+      } finally {
+        if (mounted) setLoadingTrainees(false);
+      }
+    }
+    loadTrainees();
+    return () => {
+      mounted = false;
+    };
+  }, [selectedBatchId, targetCourseId]);
 
-  const completionBuckets = [
-    { range: "0-25%", count: scopeTrainees.filter((t) => t.lessonCompletion < 25).length },
-    { range: "25-50%", count: scopeTrainees.filter((t) => t.lessonCompletion >= 25 && t.lessonCompletion < 50).length },
-    { range: "50-75%", count: scopeTrainees.filter((t) => t.lessonCompletion >= 50 && t.lessonCompletion < 75).length },
-    { range: "75-100%", count: scopeTrainees.filter((t) => t.lessonCompletion >= 75).length },
-  ];
+  const avgCompletion = useMemo(() => {
+    if (trainees.length === 0) return 0;
+    const sum = trainees.reduce((acc, t) => acc + (t.progressPct || 0), 0);
+    return Math.round(sum / trainees.length);
+  }, [trainees]);
 
-  // Attendance only exists for offline batches — never fabricate a number
-  // for a self-paced online batch that never took attendance. Mode lives on
-  // the batch, so a mixed course only counts its offline batches here.
-  const offlineBatchesInScope = selectedBatch
-    ? selectedBatch.mode === "offline"
-      ? [selectedBatch]
-      : []
-    : courseBatches.filter((b) => b.mode === "offline");
-  const attendanceRows = offlineBatchesInScope.flatMap((b) => attendanceForBatch(b.id));
-  const attendanceData = [
-    { name: "Present", value: attendanceRows.filter((r) => r.status === "P").length },
-    { name: "Absent", value: attendanceRows.filter((r) => r.status === "A").length },
-    { name: "Late", value: attendanceRows.filter((r) => r.status === "L").length },
-  ];
-  const hasAttendance = attendanceRows.length > 0;
+  const completionBuckets = useMemo(() => [
+    { range: "0-25%", count: trainees.filter((t) => t.progressPct < 25).length },
+    { range: "25-50%", count: trainees.filter((t) => t.progressPct >= 25 && t.progressPct < 50).length },
+    { range: "50-75%", count: trainees.filter((t) => t.progressPct >= 50 && t.progressPct < 75).length },
+    { range: "75-100%", count: trainees.filter((t) => t.progressPct >= 75).length },
+  ], [trainees]);
 
-  const quizScoreData = courseQuizzes.map((q) => ({ name: q.title.split(" ").slice(0, 2).join(" "), score: q.avgScore }));
+  // Attendance metrics calculated from real trainee attendance sessions
+  const attendanceData = useMemo(() => {
+    let presentCount = 0;
+    let totalCount = 0;
+    for (const t of trainees) {
+      if (t.attendanceSessions) {
+        presentCount += Number(t.attendanceSessions.present || 0);
+        totalCount += Number(t.attendanceSessions.total || 0);
+      }
+    }
+    const absentCount = Math.max(0, totalCount - presentCount);
+    return [
+      { name: "Present", value: presentCount },
+      { name: "Absent", value: absentCount },
+      { name: "Late", value: 0 },
+    ];
+  }, [trainees]);
+
+  const hasAttendance = attendanceData.some((d) => d.value > 0);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[#3A2A22]">Course Reports</h1>
-          <p className="text-sm text-[#8C7A70]">Trainee progress, attendance, scores, completion, and feedback history — batch by batch.</p>
+          <p className="text-sm text-[#8C7A70]">
+            Trainee progress, attendance, scores, and completion history — batch by batch.
+          </p>
         </div>
-        <div className="flex flex-nowrap items-center gap-2">
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {/* Batch Selector (Starting point) */}
           <select
-            value={courseId}
-            onChange={(e) => setCourseId(e.target.value)}
-            className="h-10 shrink-0 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
+            value={selectedBatchId}
+            onChange={(e) => setSelectedBatchId(e.target.value)}
+            disabled={loadingSelectors || batches.length === 0}
+            className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
           >
-            {courses.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} — {c.level}
-              </option>
-            ))}
-          </select>
-          <select
-            value={batchSelection}
-            onChange={(e) => setBatchSelection(e.target.value)}
-            className="h-10 shrink-0 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
-          >
-            <option value={ALL_BATCHES}>All batches</option>
-            {courseBatches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.code} — {b.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        {/* Trainee Progress */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>Trainee Progress</CardTitle>
-              <p className="mt-1 text-xs text-[#B7A79D]">
-                Lesson completion distribution across {scopeTrainees.length} trainees
-                {selectedBatch ? ` in ${selectedBatch.code}` : ""}
-              </p>
-            </div>
-            <Badge tone="orange">
-              <TrendingUp className="h-3 w-3" /> {avgCompletion}% avg
-            </Badge>
-          </CardHeader>
-          <CardContent className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={completionBuckets} barSize={40}>
-                <CartesianGrid vertical={false} stroke="#F5E2DA" />
-                <XAxis dataKey="range" tick={{ fontSize: 12, fill: "#8C7A70" }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 12, fill: "#8C7A70" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip cursor={{ fill: "#FBECE7" }} contentStyle={{ borderRadius: 12, borderColor: "#F0DED4" }} />
-                <Bar dataKey="count" fill="#DE896A" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Completion Rate */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Completion Rate</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center justify-center gap-3 pb-6">
-            <div className="rounded-full bg-gradient-to-br from-[#E38F6C] to-[#C26D4D] p-3">
-              <RadialProgress value={completionRate} size={120} strokeWidth={10} label={`${completionRate}%`} sublabel="complete" />
-            </div>
-            <p className="text-xs text-[#8C7A70]">{completionLabel}</p>
-          </CardContent>
-        </Card>
-
-        {/* Attendance Summary */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Attendance Summary</CardTitle>
-            {selectedBatch && <p className="mt-1 text-xs text-[#B7A79D]">Batch {selectedBatch.code}</p>}
-          </CardHeader>
-          <CardContent>
-            {hasAttendance ? (
-              <div className="flex items-center gap-4">
-                <div className="h-40 w-40 shrink-0">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={attendanceData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={70} paddingAngle={3}>
-                        {attendanceData.map((entry) => (
-                          <Cell key={entry.name} fill={STATUS_COLORS[entry.name]} />
-                        ))}
-                      </Pie>
-                      <Tooltip contentStyle={{ borderRadius: 12, borderColor: "#F0DED4" }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="space-y-2">
-                  {attendanceData.map((d) => (
-                    <div key={d.name} className="flex items-center gap-2 text-sm">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[d.name] }} />
-                      <span className="text-[#6B5A52]">{d.name}</span>
-                      <span className="font-semibold text-[#3A2A22]">{d.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            {batches.length === 0 ? (
+              <option value="">No authorized batches</option>
             ) : (
-              <div className="flex flex-col items-center justify-center gap-2 py-8 text-center text-sm text-[#B7A79D]">
-                <CalendarX2 className="h-7 w-7 text-[#E9D6CC]" />
-                Attendance isn't tracked for self-paced online batches.
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Assessment Scores */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Assessment Scores</CardTitle>
-            <p className="mt-1 text-xs text-[#B7A79D]">Average quiz score per assessment (shared across every batch)</p>
-          </CardHeader>
-          <CardContent className="h-56">
-            {quizScoreData.length === 0 ? (
-              <p className="flex h-full items-center justify-center text-sm text-[#B7A79D]">No quizzes for this course yet.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={quizScoreData} layout="vertical" barSize={20}>
-                  <CartesianGrid horizontal={false} stroke="#F5E2DA" />
-                  <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 12, fill: "#8C7A70" }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#8C7A70" }} axisLine={false} tickLine={false} width={110} />
-                  <Tooltip cursor={{ fill: "#FBECE7" }} contentStyle={{ borderRadius: 12, borderColor: "#F0DED4" }} />
-                  <Bar dataKey="score" fill="#DE896A" radius={[0, 8, 8, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Feedback Log */}
-        <Card>
-          <CardHeader className="flex flex-row items-center gap-2">
-            <MessageSquareText className="h-4 w-4 text-[#DE896A]" />
-            <CardTitle>Feedback Log</CardTitle>
-          </CardHeader>
-          <CardContent className="max-h-56 space-y-3 overflow-y-auto">
-            {feedbackLog.length === 0 ? (
-              <p className="flex items-center gap-2 text-sm text-[#B7A79D]">
-                <Users2 className="h-4 w-4" /> No feedback published yet.
-              </p>
-            ) : (
-              feedbackLog.map((s) => (
-                <div key={s.id} className="flex gap-2.5 rounded-xl bg-[#FFFBF9] p-3">
-                  <Avatar initials={s.traineeInitials} className="h-8 w-8" />
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-[#3A2A22]">
-                      {s.traineeName} <span className="font-normal text-[#B7A79D]">· {s.marks}%</span>
-                    </p>
-                    <p className="mt-0.5 text-xs text-[#8C7A70]">{s.feedback}</p>
-                  </div>
-                </div>
+              batches.map((b, idx) => (
+                <option key={`${b.id}-${idx}`} value={b.id}>
+                  {b.batchName}
+                </option>
               ))
             )}
+          </select>
+
+          {/* Course Selector (Locked derived from Batch) */}
+          <select
+            value={targetCourseId}
+            disabled={true}
+            className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
+          >
+            {!targetCourseId ? (
+              <option value="">No course found for this batch</option>
+            ) : (
+              <option value={targetCourseId}>
+                {courseDisplayName} 🔒
+              </option>
+            )}
+          </select>
+        </div>
+      </div>
+
+      {loadingSelectors || loadingTrainees ? (
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-[#B7A79D]">
+            Loading report data from BigQuery...
           </CardContent>
         </Card>
-      </div>
+      ) : (
+        <>
+          {/* Top 3 Metric Cards */}
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#8C7A70]">Avg. Completion</span>
+                  <TrendingUp className="h-4 w-4 text-[#DE896A]" />
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-3xl font-bold text-[#3A2A22]">{avgCompletion}%</span>
+                </div>
+                <p className="mt-2 text-xs text-[#B7A79D]">
+                  {selectedBatch ? selectedBatch.batchName : "In selected batch"}
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#8C7A70]">Enrolled Trainees</span>
+                  <Users2 className="h-4 w-4 text-[#C26D4D]" />
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-3xl font-bold text-[#3A2A22]">{trainees.length}</span>
+                </div>
+                <p className="mt-2 text-xs text-[#B7A79D]">
+                  {selectedBatch ? `In ${selectedBatch.batchName}` : "In selected batch"}
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#8C7A70]">Course Domains</span>
+                  <span className="text-xs font-semibold text-[#8C7A70]">
+                    {selectedCourse?.domains || 0} Modules
+                  </span>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-3xl font-bold text-[#3A2A22]">{selectedCourse?.hours || 0}h</span>
+                </div>
+                <p className="mt-2 text-xs text-[#B7A79D]">
+                  Total estimated duration
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Charts Row */}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            {/* Completion distribution */}
+            <Card>
+              <CardHeader className="border-b border-[#F5E2DA] p-5">
+                <CardTitle className="text-base font-semibold text-[#3A2A22]">
+                  Completion Distribution
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-5">
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={completionBuckets}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F5E2DA" />
+                      <XAxis dataKey="range" stroke="#8C7A70" fontSize={12} />
+                      <YAxis stroke="#8C7A70" fontSize={12} allowDecimals={false} />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#DE896A" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Attendance breakdown */}
+            <Card>
+              <CardHeader className="border-b border-[#F5E2DA] p-5">
+                <CardTitle className="text-base font-semibold text-[#3A2A22]">
+                  Attendance Breakdown
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-5">
+                {hasAttendance ? (
+                  <div className="flex h-64 flex-col items-center justify-center">
+                    <ResponsiveContainer width="100%" height="80%">
+                      <PieChart>
+                        <Pie
+                          data={attendanceData.filter((d) => d.value > 0)}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={50}
+                          outerRadius={80}
+                          paddingAngle={3}
+                        >
+                          {attendanceData.map((entry) => (
+                            <Cell key={entry.name} fill={STATUS_COLORS[entry.name] || "#DE896A"} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex gap-4 text-xs">
+                      {attendanceData.map((item) => (
+                        <div key={item.name} className="flex items-center gap-1.5">
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: STATUS_COLORS[item.name] }}
+                          />
+                          <span className="text-[#8C7A70]">{item.name}: {item.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-64 flex-col items-center justify-center text-[#B7A79D]">
+                    <CalendarX2 className="mb-2 h-8 w-8 text-[#C7B6AC]" />
+                    <p className="text-sm">No attendance records recorded yet for this selection.</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -13,8 +13,8 @@ import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
 import MyCourses from "@/pages/MyCourses";
 import Modules from "@/pages/content/Modules";
-import Lessons from "@/pages/content/Lessons";
-import Videos from "@/pages/content/Videos";
+// import Lessons from "@/pages/content/Lessons"; // Temporarily disabled
+// import Videos from "@/pages/content/Videos"; // Temporarily disabled
 import Documents from "@/pages/content/Documents";
 import Quizzes from "@/pages/Quizzes";
 import Assignments from "@/pages/Assignments";
@@ -26,7 +26,7 @@ export default function App() {
   return (
     <AuthProvider>
       <ContentProvider>
-        <BrowserRouter>
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <Toaster richColors position="top-right" />
           <Routes>
             <Route element={<PublicOnlyRoute />}>
@@ -42,8 +42,8 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/courses" element={<MyCourses />} />
                 <Route path="/content/modules" element={<Modules />} />
-                <Route path="/content/lessons" element={<Lessons />} />
-                <Route path="/content/videos" element={<Videos />} />
+                {/* <Route path="/content/lessons" element={<Lessons />} /> */} {/* Temporarily disabled */}
+                {/* <Route path="/content/videos" element={<Videos />} /> -- Temporarily disabled */}
                 <Route path="/content/documents" element={<Documents />} />
                 <Route path="/quizzes" element={<Quizzes />} />
                 <Route path="/assignments" element={<Assignments />} />

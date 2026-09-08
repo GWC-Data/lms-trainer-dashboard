@@ -1,14 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import {
-  modules as initialModules,
-  lessons as initialLessons,
-  videos as initialVideos,
-  documents as initialDocuments,
-  quizzes as initialQuizzes,
-  assignments as initialAssignments,
-  totalTraineesForCourse,
-} from "@/data/mockData";
 import type { Assignment, DocumentAsset, Lesson, Module, Quiz, VideoAsset } from "@/types";
 
 const STORAGE_KEY = "lms-content-store-v1";
@@ -100,12 +91,12 @@ const ContentContext = createContext<ContentContextValue | null>(null);
 export function ContentProvider({ children }: { children: ReactNode }) {
   const stored = useMemo(loadStored, []);
 
-  const [modules, setModules] = useState<Module[]>(stored?.modules ?? initialModules);
-  const [lessons, setLessons] = useState<Lesson[]>(stored?.lessons ?? initialLessons);
-  const [videos, setVideos] = useState<VideoAsset[]>(stored?.videos ?? initialVideos);
-  const [documents, setDocuments] = useState<DocumentAsset[]>(stored?.documents ?? initialDocuments);
-  const [quizzes, setQuizzes] = useState<Quiz[]>(stored?.quizzes ?? initialQuizzes);
-  const [assignments, setAssignments] = useState<Assignment[]>(stored?.assignments ?? initialAssignments);
+  const [modules, setModules] = useState<Module[]>(stored?.modules ?? []);
+  const [lessons, setLessons] = useState<Lesson[]>(stored?.lessons ?? []);
+  const [videos, setVideos] = useState<VideoAsset[]>(stored?.videos ?? []);
+  const [documents, setDocuments] = useState<DocumentAsset[]>(stored?.documents ?? []);
+  const [quizzes, setQuizzes] = useState<Quiz[]>(stored?.quizzes ?? []);
+  const [assignments, setAssignments] = useState<Assignment[]>(stored?.assignments ?? []);
 
   useEffect(() => {
     // fileUrl is a blob: URL that only lives for this session — don't persist a dead reference.
@@ -189,7 +180,7 @@ export function ContentProvider({ children }: { children: ReactNode }) {
       courseId: input.courseId,
       questions: input.questions,
       submissions: 0,
-      totalTrainees: totalTraineesForCourse(input.courseId),
+      totalTrainees: 0,
       avgScore: 0,
       status: input.status,
     };
@@ -214,7 +205,7 @@ export function ContentProvider({ children }: { children: ReactNode }) {
       courseId: input.courseId,
       submissions: 0,
       pendingReview: 0,
-      totalTrainees: totalTraineesForCourse(input.courseId),
+      totalTrainees: 0,
       dueDate: input.dueDate,
     };
     setAssignments((prev) => [newAssignment, ...prev]);
