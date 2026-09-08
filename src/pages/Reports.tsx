@@ -22,6 +22,22 @@ import {
   type BackendBatchItem,
   type TraineeListItem,
 } from "@/services/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
+
+function cleanDisplayString(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*cid-[a-zA-Z0-9_-]+/gi, "")
+    .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
+    .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
+    .trim();
+}
 
 const STATUS_COLORS: Record<string, string> = {
   Present: "#DE896A",
@@ -163,37 +179,32 @@ export default function Reports() {
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           {/* Batch Selector (Starting point) */}
-          <select
-            value={selectedBatchId}
-            onChange={(e) => setSelectedBatchId(e.target.value)}
-            disabled={loadingSelectors || batches.length === 0}
-            className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
-          >
-            {batches.length === 0 ? (
-              <option value="">No authorized batches</option>
-            ) : (
-              batches.map((b, idx) => (
-                <option key={`${b.id}-${idx}`} value={b.id}>
-                  {b.batchName}
-                </option>
-              ))
-            )}
-          </select>
+          <div className="w-[200px]">
+            <Select
+              value={selectedBatchId}
+              onValueChange={(val) => setSelectedBatchId(val)}
+              disabled={loadingSelectors || batches.length === 0}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-medium text-[#3A2A22]">
+                <SelectValue placeholder={loadingSelectors ? "Loading batches..." : "Select Batch"} />
+              </SelectTrigger>
+              <SelectContent>
+                {batches.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {cleanDisplayString(b.batchName)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* Course Selector (Locked derived from Batch) */}
-          <select
-            value={targetCourseId}
-            disabled={true}
-            className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
-          >
-            {!targetCourseId ? (
-              <option value="">No course found for this batch</option>
-            ) : (
-              <option value={targetCourseId}>
-                {courseDisplayName} 🔒
-              </option>
-            )}
-          </select>
+          {/* Course (Locked derived from Batch) */}
+          <div className="rounded-xl border border-[#F0DED4] bg-[#FFFBF9] px-3.5 py-2 min-w-[180px]">
+            <p className="text-[10px] font-medium text-[#8C7A70]">Allocated Course</p>
+            <p className="text-xs font-bold text-[#233047] truncate">
+              {targetCourseId ? `${cleanDisplayString(courseDisplayName)} 🔒` : "No course assigned"}
+            </p>
+          </div>
         </div>
       </div>
 

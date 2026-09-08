@@ -4,7 +4,13 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import FileDropzone, { formatFileSize } from "@/components/ui/FileDropzone";
 import { courses } from "@/data/mockData";
 import { useContent } from "@/context/ContentContext";
@@ -43,6 +49,7 @@ export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }
     handleSubmit,
     reset,
     setValue,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     defaultValues: { title: "", courseId: defaultCourseId ?? courses[0]?.id ?? "" },
@@ -122,13 +129,24 @@ export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }
             error={errors.title?.message}
             {...register("title", { required: "Title is required" })}
           />
-          <Select label="Course" {...register("courseId", { required: true })}>
-            {courses.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} — {c.level}
-              </option>
-            ))}
-          </Select>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">Course</label>
+            <Select
+              value={watch("courseId")}
+              onValueChange={(val) => setValue("courseId", val)}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue placeholder="Select Course" />
+              </SelectTrigger>
+              <SelectContent>
+                {courses.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name} — {c.level}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

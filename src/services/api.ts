@@ -302,12 +302,15 @@ export interface TrainerCourseItem {
   id: string;
   name: string;
   courseName?: string;
+  courseCode?: string;
+  description?: string;
   level: string;
   image: string;
   domains: number;
   hours: string;
   deliveryModes: ('online' | 'offline')[];
   totalTrainees: number;
+  progress?: number;
   batches: TrainerCourseBatch[];
 }
 
@@ -498,14 +501,19 @@ export async function getModulesForCourseApi(
 export interface BackendBatchItem {
   id: string;
   batchName: string;
-  startDate?: string;
-  endDate?: string;
-  courseId?: string;
+  name?: string;
+  deliveryMode?: "online" | "offline" | string;
+  startDate?: string | null;
+  endDate?: string | null;
+  courseId?: string | null;
   course?: {
     id: string;
     courseName: string;
-    courseImg?: string;
-    courseLink?: string;
+    courseCode?: string | null;
+    courseDesc?: string | null;
+    deliveryMode?: string | null;
+    courseImg?: string | null;
+    courseLink?: string | null;
   } | null;
   trainees?: any[];
 }
@@ -601,6 +609,7 @@ export async function getDocumentsApi(params?: {
   courseId?: string;
   moduleId?: string;
   lessonId?: string;
+  batchId?: string;
   search?: string;
 }): Promise<DocumentsResponse> {
   const response = await api.get<DocumentsResponse>("/documents", {
@@ -699,6 +708,40 @@ export async function deleteQuizApi(id: string): Promise<{ success: boolean; mes
   const response = await api.delete<{ success: boolean; message: string }>(`/quizzes/${id}`);
   return response.data;
 }
+
+export interface AssessmentResultItem {
+  id: string;
+  assessmentId: string;
+  traineeId: string;
+  traineeName?: string;
+  traineeFirstName?: string;
+  traineeLastName?: string;
+  traineeEmail?: string;
+  score: number;
+  completedAt?: string;
+  createdAt?: string;
+}
+
+export interface AssessmentResultsResponse {
+  message?: string;
+  assessmentResults?: { data?: AssessmentResultItem[]; results?: AssessmentResultItem[] } | AssessmentResultItem[];
+}
+
+/**
+ * Real Assessment Results API: GET /assessment-results?assessmentId=...
+ * Authenticated via JWT. Scoped to trainer/admin.
+ */
+export async function getQuizResultsApi(assessmentId: string): Promise<AssessmentResultItem[]> {
+  const response = await api.get<AssessmentResultsResponse>("/assessment-results", {
+    params: { assessmentId }
+  });
+  const raw = response.data?.assessmentResults;
+  if (Array.isArray(raw)) return raw;
+  if (raw && Array.isArray((raw as any).data)) return (raw as any).data;
+  if (raw && Array.isArray((raw as any).results)) return (raw as any).results;
+  return [];
+}
+
 
 /**
  * Real Trainee Quizzes API: GET /trainee/quizzes
@@ -1004,6 +1047,7 @@ export async function getTraineeDetailsApi(traineeId: string): Promise<any> {
 export interface BulkAttendanceRecord {
   userId: string;
   status: 'present' | 'absent' | 'late' | 'excused';
+  remark?: string;
 }
 
 export interface BulkAttendancePayload {
@@ -1018,10 +1062,13 @@ export async function bulkSaveAttendanceApi(payload: BulkAttendancePayload): Pro
   return response.data;
 }
 
-export async function getAttendanceByBatchApi(batchId?: string): Promise<any> {
+export async function getAttendanceByBatchApi(batchId?: string, courseId?: string): Promise<any> {
   const params: Record<string, string> = {};
   if (batchId && batchId !== "all") {
     params.batchId = batchId;
+  }
+  if (courseId && courseId !== "all") {
+    params.courseId = courseId;
   }
   const response = await api.get<any>("/attendance", { params });
   return response.data;

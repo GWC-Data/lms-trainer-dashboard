@@ -237,10 +237,7 @@ export default function Dashboard() {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-sm font-semibold text-[#3A2A22]">
-                            {c.name}{" "}
-                            {c.level && (
-                              <span className="font-normal text-[#B7A79D]">— {c.level}</span>
-                            )}
+                            {c.name}
                           </p>
                           {modes.map((mode) => (
                             <Badge

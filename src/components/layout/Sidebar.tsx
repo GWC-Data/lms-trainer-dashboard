@@ -11,6 +11,7 @@ import {
   Users,
   BarChart3,
   LogOut,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
@@ -56,6 +57,7 @@ const sections: NavSection[] = [
   {
     label: "Operations",
     items: [
+      { to: "/batches", label: "Batches", icon: Layers },
       { to: "/attendance", label: "Attendance", icon: UserCheck },
       { to: "/trainees", label: "Trainees", icon: Users },
       { to: "/reports", label: "Reports", icon: BarChart3 },

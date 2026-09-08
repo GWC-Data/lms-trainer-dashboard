@@ -1,10 +1,23 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/Dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import FileDropzone from "@/components/ui/FileDropzone";
 import {
   getTrainerBatchesApi,
@@ -22,6 +35,8 @@ interface UploadDocumentModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultBatchId?: string;
+  defaultCourseId?: string;
+  defaultModuleId?: string;
   onSuccess?: () => void;
 }
 
@@ -41,6 +56,15 @@ interface SelectedFile {
 interface CourseOption {
   id: string;
   name: string;
+}
+
+function cleanDisplayString(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*cid-[a-zA-Z0-9_-]+/gi, "")
+    .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
+    .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
+    .trim();
 }
 
 function extractErrorMessage(err: any): string {
@@ -89,6 +113,8 @@ export default function UploadDocumentModal({
   open,
   onOpenChange,
   defaultBatchId,
+  defaultCourseId,
+  defaultModuleId,
   onSuccess,
 }: UploadDocumentModalProps) {
   const [batches, setBatches] = useState<BackendBatchItem[]>([]);
@@ -118,8 +144,8 @@ export default function UploadDocumentModal({
     defaultValues: {
       title: "",
       batchId: defaultBatchId ?? "",
-      courseId: "",
-      moduleId: "",
+      courseId: defaultCourseId ?? "",
+      moduleId: defaultModuleId ?? "",
       lessonId: "",
     },
   });
@@ -129,7 +155,7 @@ export default function UploadDocumentModal({
   const moduleId = watch("moduleId");
   const lessonId = watch("lessonId");
 
-  // Step 1: Fetch authorized batches and all real courses from BigQuery when modal opens
+  // Step 1: Fetch authorized batches and courses from BigQuery when modal opens
   useEffect(() => {
     if (!open) return;
 
@@ -152,16 +178,22 @@ export default function UploadDocumentModal({
         setBatches(batchList);
         setAllCourses(coursesRes?.courses || []);
 
-        const initialBatchId =
-          defaultBatchId && batchList.some((b) => b.id === defaultBatchId)
-            ? defaultBatchId
-            : batchList[0]?.id ?? "";
+        let initialBatchId = defaultBatchId;
+        if (!initialBatchId && defaultCourseId) {
+          const matchBatch = batchList.find(
+            (b) => b.courseId === defaultCourseId || b.course?.id === defaultCourseId
+          );
+          if (matchBatch) initialBatchId = matchBatch.id;
+        }
+        if (!initialBatchId && batchList.length > 0) {
+          initialBatchId = batchList[0].id;
+        }
 
         reset({
           title: "",
-          batchId: initialBatchId,
+          batchId: initialBatchId || "",
           courseId: "",
-          moduleId: "",
+          moduleId: defaultModuleId || "",
           lessonId: "",
         });
       })
@@ -181,9 +213,9 @@ export default function UploadDocumentModal({
     return () => {
       cancelled = true;
     };
-  }, [open, defaultBatchId, reset]);
+  }, [open, defaultBatchId, defaultCourseId, defaultModuleId, reset]);
 
-  // Step 2: When Batch changes -> reset Course, Module, Lesson; resolve Course for selected Batch
+  // Step 2: When Batch changes -> resolve real Course automatically (locked)
   useEffect(() => {
     setValue("courseId", "");
     setValue("moduleId", "");
@@ -202,7 +234,6 @@ export default function UploadDocumentModal({
       return;
     }
 
-    // Resolve course against allCourses from BigQuery Courses table
     const matched = allCourses.find((c) => (c.id || (c as any).courseId) === targetCourseId);
     if (matched) {
       const courseOpt: CourseOption = {
@@ -212,7 +243,6 @@ export default function UploadDocumentModal({
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id);
     } else if (foundBatch?.course?.courseName) {
-      // Fallback from batch join if course exists in Courses table
       const courseOpt: CourseOption = {
         id: targetCourseId,
         name: foundBatch.course.courseName,
@@ -220,13 +250,12 @@ export default function UploadDocumentModal({
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id);
     } else {
-      // If batch has no valid course in BigQuery Courses table
       setCourses([]);
       setValue("courseId", "");
     }
   }, [open, batchId, batches, allCourses, setValue]);
 
-  // Step 3: When Course changes -> reset Module, Lesson; load Modules for Course
+  // Step 3: When Course changes -> load Modules for that Course
   useEffect(() => {
     setValue("moduleId", "");
     setValue("lessonId", "");
@@ -242,8 +271,12 @@ export default function UploadDocumentModal({
         if (cancelled) return;
         const moduleList = res.modules || [];
         setModules(moduleList);
-        if (moduleList.length > 0) {
-          setValue("moduleId", moduleList[0].id);
+        const targetModuleId =
+          defaultModuleId && moduleList.some((m) => m.id === defaultModuleId)
+            ? defaultModuleId
+            : moduleList[0]?.id || "";
+        if (targetModuleId) {
+          setValue("moduleId", targetModuleId);
         }
       })
       .catch((err) => {
@@ -258,9 +291,9 @@ export default function UploadDocumentModal({
     return () => {
       cancelled = true;
     };
-  }, [open, courseId, setValue]);
+  }, [open, courseId, defaultModuleId, setValue]);
 
-  // Step 4: When Module changes -> reset Lesson; load Lessons for Module & Course
+  // Step 4: When Module changes -> load Lessons for Module & Course
   useEffect(() => {
     setValue("lessonId", "");
     setLessons([]);
@@ -300,9 +333,16 @@ export default function UploadDocumentModal({
     setValue("title", file.name.replace(/\.[^/.]+$/, ""));
   }
 
+  function handleFileRemoved() {
+    setSelected((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  }
+
   async function onSubmit(values: FormValues) {
-    if (!selected) {
-      setFileError("Please choose a file");
+    if (!selected?.file) {
+      setFileError("Please upload a document file.");
       return;
     }
     if (!values.batchId) {
@@ -310,7 +350,7 @@ export default function UploadDocumentModal({
       return;
     }
     if (!values.courseId) {
-      setSubmitError("Please select a course.");
+      setSubmitError("No course resolved for the selected batch.");
       return;
     }
     if (!values.moduleId) {
@@ -322,10 +362,10 @@ export default function UploadDocumentModal({
       return;
     }
 
-    setSubmitting(true);
-    setSubmitError(null);
-
     try {
+      setSubmitting(true);
+      setSubmitError(null);
+
       const formData = new FormData();
       formData.append("file", selected.file);
       formData.append("title", values.title.trim());
@@ -336,17 +376,15 @@ export default function UploadDocumentModal({
 
       const res = await uploadDocumentApi(formData);
       if (res.success) {
-        toast.success(`"${values.title}" uploaded`);
-        onSuccess?.();
+        toast.success(`Material "${values.title}" uploaded successfully.`);
         onOpenChange(false);
+        if (onSuccess) onSuccess();
       } else {
         setSubmitError(res.message || "Failed to upload document.");
       }
     } catch (err: any) {
-      console.error("Error uploading document:", err);
-      const msg = extractErrorMessage(err);
-      setSubmitError(msg);
-      toast.error(msg);
+      console.error("Document upload error:", err);
+      setSubmitError(extractErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -354,141 +392,157 @@ export default function UploadDocumentModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Upload Material</DialogTitle>
-          <DialogDescription>Attach reference material or a study guide.</DialogDescription>
+          <DialogDescription>
+            Attach reference material, worksheets, or presentations to a specific lesson.
+          </DialogDescription>
         </DialogHeader>
 
-        {submitError && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-            {submitError}
-          </div>
-        )}
-
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          {/* 1. File Upload */}
-          <FileDropzone
-            accept={{
-              "application/pdf": [".pdf"],
-              "application/msword": [".doc"],
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
-              "application/vnd.ms-powerpoint": [".ppt"],
-              "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
-              "application/vnd.ms-excel": [".xls"],
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-              "text/plain": [".txt"],
-            }}
-            file={selected?.file ?? null}
-            onFileSelected={handleFileSelected}
-            hint="PDF, DOCX, PPTX, XLSX, TXT..."
-            error={fileError}
-          />
+          {submitError && (
+            <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">
+              {submitError}
+            </div>
+          )}
 
-          {/* 2. Document Title */}
+          {/* 1. File Upload Dropzone */}
+          <div>
+            <label className="text-xs font-semibold text-[#233047] block mb-1.5">
+              File <span className="text-red-500">*</span>
+            </label>
+            <FileDropzone
+              accept={{
+                "application/pdf": [".pdf"],
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+                "application/msword": [".doc"],
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+                "application/vnd.ms-powerpoint": [".ppt"],
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+                "application/vnd.ms-excel": [".xls"],
+                "text/plain": [".txt"],
+              }}
+              file={selected?.file || null}
+              onFileSelected={handleFileSelected}
+              hint="PDF, Word, PowerPoint, Excel, or Text (up to 50MB)"
+              error={fileError}
+            />
+          </div>
+
+          {/* 2. Material Title */}
           <Input
             label="Title"
-            placeholder="e.g. Prompting Techniques Cheatsheet"
+            placeholder="e.g. Prompt Engineering Cheatsheet"
             error={errors.title?.message}
             {...register("title", { required: "Title is required" })}
           />
 
-          {/* 3. Batch */}
-          <Select
-            label="Batch"
-            disabled={loadingBatches}
-            error={errors.batchId?.message}
-            {...register("batchId", { required: "Batch is required" })}
-          >
-            {loadingBatches ? (
-              <option value="">Loading batches...</option>
-            ) : batches.length === 0 ? (
-              <option value="">No authorized batches available</option>
-            ) : (
-              <>
-                <option value="">Select Batch</option>
+          {/* 3. Batch Dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Batch <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={batchId}
+              onValueChange={(val) => setValue("batchId", val)}
+              disabled={loadingBatches || submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue
+                  placeholder={loadingBatches ? "Loading batches..." : "Select Batch"}
+                />
+              </SelectTrigger>
+              <SelectContent>
                 {batches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.batchName || (b as any).name}
-                  </option>
+                  <SelectItem key={b.id} value={b.id}>
+                    {cleanDisplayString(b.batchName || (b as any).name)}
+                  </SelectItem>
                 ))}
-              </>
-            )}
-          </Select>
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* 4. Course (Read-only / Locked determined by Batch) */}
-          <Select
-            label="Course"
-            disabled={true}
-            error={errors.courseId?.message}
-            {...register("courseId", { required: "Course is required" })}
-          >
-            {loadingCourses ? (
-              <option value="">Resolving course...</option>
-            ) : !batchId ? (
-              <option value="">Select Batch first</option>
-            ) : courses.length === 0 ? (
-              <option value="">No course found for this batch</option>
-            ) : (
-              courses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} 🔒
-                </option>
-              ))
-            )}
-          </Select>
+          {/* 4. Course (Auto-Derived from Batch & Locked) */}
+          <div className="rounded-xl border border-[#F0EAE6] bg-[#FFFBF9] px-3.5 py-2.5">
+            <p className="text-[11px] font-medium text-[#8C7A70]">Allocated Course (Locked)</p>
+            <p className="text-xs font-bold text-[#233047] mt-0.5">
+              {loadingCourses
+                ? "Resolving course..."
+                : courses.length > 0
+                ? cleanDisplayString(courses[0].name)
+                : batchId
+                ? "No course assigned to this batch"
+                : "Select a batch to resolve course"}
+            </p>
+          </div>
 
-          {/* 5. Module */}
-          <Select
-            label="Module"
-            disabled={loadingModules || !courseId || modules.length === 0}
-            error={errors.moduleId?.message}
-            {...register("moduleId", { required: "Module is required" })}
-          >
-            {loadingModules ? (
-              <option value="">Loading modules...</option>
-            ) : !courseId ? (
-              <option value="">Select Course first</option>
-            ) : modules.length === 0 ? (
-              <option value="">No modules found for this course</option>
-            ) : (
-              <>
-                <option value="">Select Module</option>
+          {/* 5. Module Dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Module <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={moduleId}
+              onValueChange={(val) => setValue("moduleId", val)}
+              disabled={loadingModules || !courseId || modules.length === 0 || submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue
+                  placeholder={
+                    loadingModules
+                      ? "Loading modules..."
+                      : !courseId
+                      ? "Select Batch first"
+                      : modules.length === 0
+                      ? "No modules available"
+                      : "Select Module"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
                 {modules.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.moduleName || m.title || `Module ${m.id}`}
-                  </option>
+                  <SelectItem key={m.id} value={m.id}>
+                    {cleanDisplayString(m.moduleName || m.title)}
+                  </SelectItem>
                 ))}
-              </>
-            )}
-          </Select>
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* 6. Lesson */}
-          <Select
-            label="Lesson"
-            disabled={loadingLessons || !moduleId || lessons.length === 0}
-            error={errors.lessonId?.message}
-            {...register("lessonId", { required: "Lesson is required" })}
-          >
-            {loadingLessons ? (
-              <option value="">Loading lessons...</option>
-            ) : !moduleId ? (
-              <option value="">Select Module first</option>
-            ) : lessons.length === 0 ? (
-              <option value="">No lessons found for this module</option>
-            ) : (
-              <>
-                <option value="">Select Lesson</option>
+          {/* 6. Lesson Dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Lesson <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={lessonId}
+              onValueChange={(val) => setValue("lessonId", val)}
+              disabled={loadingLessons || !moduleId || lessons.length === 0 || submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue
+                  placeholder={
+                    loadingLessons
+                      ? "Loading lessons..."
+                      : !moduleId
+                      ? "Select Module first"
+                      : lessons.length === 0
+                      ? "No lessons available"
+                      : "Select Lesson"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
                 {lessons.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.lessonTitle}
-                  </option>
+                  <SelectItem key={l.id} value={l.id}>
+                    {cleanDisplayString(l.lessonTitle)}
+                  </SelectItem>
                 ))}
-              </>
-            )}
-          </Select>
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* 7. Upload Document Button */}
           <DialogFooter>
             <Button
               type="button"
@@ -507,8 +561,7 @@ export default function UploadDocumentModal({
                 !batchId ||
                 !courseId ||
                 !moduleId ||
-                !lessonId ||
-                lessons.length === 0
+                !lessonId
               }
             >
               {submitting ? "Uploading..." : "Upload Material"}

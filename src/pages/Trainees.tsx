@@ -14,7 +14,23 @@ import {
   type TrainerCourseItem,
   type TraineeListItem,
 } from "@/services/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import { cn } from "@/lib/utils";
+
+function cleanDisplayString(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*cid-[a-zA-Z0-9_-]+/gi, "")
+    .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
+    .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
+    .trim();
+}
 
 const ALL = "all";
 
@@ -175,59 +191,77 @@ export default function Trainees() {
         </div>
 
         {/* Batch filter: Primary Starting Point (ALL real batches) */}
-        <select
-          value={batchFilter}
-          onChange={(e) => handleBatchChange(e.target.value)}
-          disabled={loadingSelectors}
-          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
-        >
-          <option value={ALL}>All Batches</option>
-          {batches.map((b, idx) => (
-            <option key={`${b.id}-${idx}`} value={b.id}>
-              {b.batchName}
-            </option>
-          ))}
-        </select>
+        <div className="w-[180px]">
+          <Select
+            value={batchFilter}
+            onValueChange={handleBatchChange}
+            disabled={loadingSelectors}
+          >
+            <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-medium text-[#3A2A22]">
+              <SelectValue placeholder="Batch" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All Batches</SelectItem>
+              {batches.map((b) => (
+                <SelectItem key={b.id} value={b.id}>
+                  {cleanDisplayString(b.batchName)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
         {/* Course filter: Strictly resolved from selected Batch */}
-        <select
-          value={courseFilter}
-          onChange={(e) => setCourseFilter(e.target.value)}
-          disabled={loadingSelectors || batchFilter !== ALL}
-          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
-        >
-          {batchFilter === ALL ? (
-            <>
-              <option value={ALL}>All Courses</option>
-              {courses.map((c, idx) => (
-                <option key={`${c.id}-${idx}`} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </>
-          ) : (
-            (() => {
-              const matchedCourse = courses.find((c) => c.id === courseFilter);
-              const b = batches.find((item) => item.id === batchFilter);
-              const cName = matchedCourse?.name || b?.course?.courseName;
-              return cName ? (
-                <option value={courseFilter}>{cName} 🔒</option>
+        <div className="w-[180px]">
+          <Select
+            value={courseFilter}
+            onValueChange={handleCourseChange}
+            disabled={loadingSelectors || batchFilter !== ALL}
+          >
+            <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-medium text-[#3A2A22]">
+              <SelectValue placeholder="Course" />
+            </SelectTrigger>
+            <SelectContent>
+              {batchFilter === ALL ? (
+                <>
+                  <SelectItem value={ALL}>All Courses</SelectItem>
+                  {courses.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {cleanDisplayString(c.name)}
+                    </SelectItem>
+                  ))}
+                </>
               ) : (
-                <option value="">No course found for this batch</option>
-              );
-            })()
-          )}
-        </select>
+                (() => {
+                  const matchedCourse = courses.find((c) => c.id === courseFilter);
+                  const b = batches.find((item) => item.id === batchFilter);
+                  const cName = matchedCourse?.name || b?.course?.courseName;
+                  return cName ? (
+                    <SelectItem value={courseFilter}>{cleanDisplayString(cName)} 🔒</SelectItem>
+                  ) : (
+                    <SelectItem value="none" disabled>
+                      No course found
+                    </SelectItem>
+                  );
+                })()
+              )}
+            </SelectContent>
+          </Select>
+        </div>
 
-        <select
-          value={modeFilter}
-          onChange={(e) => setModeFilter(e.target.value)}
-          className="h-10 rounded-xl border border-[#F0DED4] bg-white px-3 text-sm text-[#3A2A22] focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20"
-        >
-          <option value={ALL}>All modes</option>
-          <option value="online">Online</option>
-          <option value="offline">Offline</option>
-        </select>
+        {/* Mode filter */}
+        <div className="w-[130px]">
+          <Select value={modeFilter} onValueChange={setModeFilter}>
+            <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-medium text-[#3A2A22]">
+              <SelectValue placeholder="Mode" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>All modes</SelectItem>
+              <SelectItem value="online">Online</SelectItem>
+              <SelectItem value="offline">Offline</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
         <button
           onClick={() => setRiskOnly((v) => !v)}

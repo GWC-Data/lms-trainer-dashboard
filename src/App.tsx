@@ -21,6 +21,7 @@ import Assignments from "@/pages/Assignments";
 import Attendance from "@/pages/Attendance";
 import Trainees from "@/pages/Trainees";
 import Reports from "@/pages/Reports";
+import Batches from "@/pages/Batches";
 
 export default function App() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
               <Route element={<DashboardLayout />}>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/courses" element={<MyCourses />} />
+                <Route path="/batches" element={<Batches />} />
                 <Route path="/content/modules" element={<Modules />} />
                 {/* <Route path="/content/lessons" element={<Lessons />} /> */} {/* Temporarily disabled */}
                 {/* <Route path="/content/videos" element={<Videos />} /> -- Temporarily disabled */}

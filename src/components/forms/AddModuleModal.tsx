@@ -1,16 +1,28 @@
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/Dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import { getTrainerBatchesApi, createModuleApi, BackendBatchItem } from "@/services/api";
 
 interface AddModuleModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Pre-select a batch when opened from a specific batch context */
   defaultBatchId?: string;
   onSuccess?: () => void;
 }
@@ -20,7 +32,21 @@ interface FormValues {
   batchId: string;
 }
 
-export default function AddModuleModal({ open, onOpenChange, defaultBatchId, onSuccess }: AddModuleModalProps) {
+function cleanDisplayString(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*cid-[a-zA-Z0-9_-]+/gi, "")
+    .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
+    .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
+    .trim();
+}
+
+export default function AddModuleModal({
+  open,
+  onOpenChange,
+  defaultBatchId,
+  onSuccess,
+}: AddModuleModalProps) {
   const [batches, setBatches] = useState<BackendBatchItem[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -39,9 +65,8 @@ export default function AddModuleModal({ open, onOpenChange, defaultBatchId, onS
 
   const selectedBatchId = watch("batchId");
   const selectedBatch = batches.find((b) => b.id === selectedBatchId);
-  // Derive courseId from the selected batch's course
   const derivedCourseId = selectedBatch?.course?.id ?? selectedBatch?.courseId ?? "";
-  const derivedCourseName = selectedBatch?.course?.courseName ?? "";
+  const derivedCourseName = cleanDisplayString(selectedBatch?.course?.courseName);
 
   useEffect(() => {
     if (!open) {
@@ -121,7 +146,9 @@ export default function AddModuleModal({ open, onOpenChange, defaultBatchId, onS
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New Module</DialogTitle>
-          <DialogDescription>Select a batch — the course is automatically determined from it.</DialogDescription>
+          <DialogDescription>
+            Select a batch — the course is automatically resolved from it.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           {submitError && (
@@ -138,24 +165,30 @@ export default function AddModuleModal({ open, onOpenChange, defaultBatchId, onS
             {...register("title", { required: "Title is required" })}
           />
 
-          <Select
-            label="Batch"
-            disabled={loadingBatches || submitting}
-            {...register("batchId", { required: "Please select a batch" })}
-          >
-            {loadingBatches ? (
-              <option value="">Loading batches...</option>
-            ) : batches.length === 0 ? (
-              <option value="">No batches available</option>
-            ) : (
-              batches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.batchName}
-                  {b.course?.courseName ? ` — ${b.course.courseName}` : ""}
-                </option>
-              ))
-            )}
-          </Select>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Batch <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={selectedBatchId}
+              onValueChange={(val) => setValue("batchId", val)}
+              disabled={loadingBatches || submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue
+                  placeholder={loadingBatches ? "Loading batches..." : "Select Batch"}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {batches.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {cleanDisplayString(b.batchName)}
+                    {b.course?.courseName ? ` — ${cleanDisplayString(b.course.courseName)}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
           {/* Show the derived course as read-only info */}
           {derivedCourseName && (

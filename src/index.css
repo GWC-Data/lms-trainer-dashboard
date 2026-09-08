@@ -101,6 +101,18 @@
   width: 4px;
 }
 
+/* Utility to completely hide scrollbars across browsers */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important; /* IE and Edge */
+  scrollbar-width: none !important; /* Firefox */
+}
+
+
 /* Soft ambient wash behind the dashboard content — two low-opacity color
    blobs over the base cream, instead of one flat fill. */
 .app-canvas-bg {

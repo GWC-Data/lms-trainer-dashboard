@@ -11,7 +11,13 @@ import {
 } from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import {
   getTrainerBatchesApi,
   getModulesForCourseApi,
@@ -23,9 +29,7 @@ import {
 interface AddLessonModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Pre-select a batch when opened from a specific batch context */
   defaultBatchId?: string;
-  /** Called after a lesson is successfully created so the parent can refresh */
   onSuccess?: () => void;
 }
 
@@ -43,6 +47,15 @@ const TYPE_OPTIONS = [
   { value: "quiz", label: "Quiz" },
   { value: "assignment", label: "Assignment" },
 ];
+
+function cleanDisplayString(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*cid-[a-zA-Z0-9_-]+/gi, "")
+    .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
+    .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
+    .trim();
+}
 
 function extractLessonErrorMessage(err: any): string {
   const status = err?.response?.status;
@@ -117,14 +130,13 @@ export default function AddLessonModal({
   });
 
   const batchId = watch("batchId");
+  const moduleId = watch("moduleId");
   const type = watch("type");
 
-  // Derive courseId from the selected batch
   const selectedBatch = batches.find((b) => b.id === batchId);
   const derivedCourseId = selectedBatch?.course?.id ?? selectedBatch?.courseId ?? "";
-  const derivedCourseName = selectedBatch?.course?.courseName ?? "";
+  const derivedCourseName = cleanDisplayString(selectedBatch?.course?.courseName);
 
-  // Fetch ALL batches when the modal opens
   useEffect(() => {
     if (!open) {
       setSubmitError(null);
@@ -158,10 +170,8 @@ export default function AddLessonModal({
     return () => {
       isMounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, defaultBatchId]);
+  }, [open, defaultBatchId, reset]);
 
-  // When batchId changes, derive courseId and reload modules for that course
   useEffect(() => {
     if (!derivedCourseId) {
       setModules([]);
@@ -173,17 +183,17 @@ export default function AddLessonModal({
     const fetchModules = async () => {
       try {
         setLoadingModules(true);
-        setModules([]);
-        setValue("moduleId", "");
         const res = await getModulesForCourseApi(derivedCourseId);
-        if (isMounted && res.success && Array.isArray(res.modules)) {
+        if (isMounted && Array.isArray(res.modules)) {
           setModules(res.modules);
-          // Pre-select the first module automatically
-          const firstId = res.modules[0]?.id ?? "";
-          setValue("moduleId", firstId);
+          if (res.modules.length > 0) {
+            setValue("moduleId", res.modules[0].id);
+          } else {
+            setValue("moduleId", "");
+          }
         }
       } catch (err) {
-        console.error("Failed to load modules for course:", err);
+        console.error("Failed to load modules for lesson modal:", err);
         if (isMounted) setModules([]);
       } finally {
         if (isMounted) setLoadingModules(false);
@@ -194,16 +204,20 @@ export default function AddLessonModal({
     return () => {
       isMounted = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [derivedCourseId]);
+  }, [derivedCourseId, setValue]);
 
   async function onSubmit(values: FormValues) {
-    if (!values.moduleId) {
-      toast.error("This course has no modules yet — add a module first.");
+    if (!values.title.trim()) return;
+    if (!values.batchId) {
+      setSubmitError("Please select a batch.");
       return;
     }
     if (!derivedCourseId) {
-      toast.error("The selected batch has no associated course. Please contact your administrator.");
+      setSubmitError("No course is associated with the selected batch.");
+      return;
+    }
+    if (!values.moduleId) {
+      setSubmitError("Please select a module.");
       return;
     }
 
@@ -212,26 +226,23 @@ export default function AddLessonModal({
       setSubmitError(null);
 
       const res = await createLessonApi({
-        title: values.title,
+        title: values.title.trim(),
         courseId: derivedCourseId,
         moduleId: values.moduleId,
-        type: values.type,
-        duration: values.type === "video" && values.duration ? values.duration : undefined,
+        type: values.type || "video",
+        duration: values.type === "video" && values.duration.trim() ? values.duration.trim() : undefined,
       });
 
       if (res.success) {
-        toast.success(`Lesson "${values.title}" added`);
+        toast.success(`Lesson "${values.title}" created successfully.`);
         onOpenChange(false);
-        if (onSuccess) {
-          onSuccess();
-        }
+        if (onSuccess) onSuccess();
       } else {
         setSubmitError(res.message || "Failed to create lesson.");
       }
     } catch (err: any) {
       console.error("Error creating lesson:", err);
-      const msg = extractLessonErrorMessage(err);
-      setSubmitError(msg);
+      setSubmitError(extractLessonErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -242,7 +253,9 @@ export default function AddLessonModal({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New Lesson</DialogTitle>
-          <DialogDescription>Select a batch — the course is auto-derived. Then choose a module.</DialogDescription>
+          <DialogDescription>
+            Select a batch — its course is automatically derived and locked.
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -260,75 +273,97 @@ export default function AddLessonModal({
             {...register("title", { required: "Title is required" })}
           />
 
-          {/* Batch dropdown — all real batches */}
-          <Select
-            label="Batch"
-            disabled={loadingBatches || submitting}
-            {...register("batchId", { required: "Please select a batch" })}
-          >
-            {loadingBatches ? (
-              <option value="">Loading batches...</option>
-            ) : batches.length === 0 ? (
-              <option value="">No batches available</option>
-            ) : (
-              batches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.batchName}
-                  {b.course?.courseName ? ` — ${b.course.courseName}` : ""}
-                </option>
-              ))
-            )}
-          </Select>
+          {/* Batch dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Batch <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={batchId}
+              onValueChange={(val) => setValue("batchId", val)}
+              disabled={loadingBatches || submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue placeholder={loadingBatches ? "Loading batches..." : "Select Batch"} />
+              </SelectTrigger>
+              <SelectContent>
+                {batches.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {cleanDisplayString(b.batchName)}
+                    {b.course?.courseName ? ` — ${cleanDisplayString(b.course.courseName)}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* Show the derived course as read-only info */}
+          {/* Derived Course (Locked) */}
           {derivedCourseName && (
-            <div className="rounded-lg bg-[#FBF5F2] border border-[#EEAF9C] px-3 py-2 text-xs text-[#8A442E]">
-              <span className="font-medium">Course (auto-derived):</span> {derivedCourseName}
+            <div className="rounded-xl border border-[#EEAF9C] bg-[#FBF5F2] px-3.5 py-2.5 text-xs text-[#8A442E]">
+              <span className="font-semibold">Course (auto-derived):</span> {derivedCourseName}
             </div>
           )}
 
-          {/* Module dropdown — dynamically reloads when batch/course changes */}
-          <Select
-            label="Module"
-            disabled={loadingModules || submitting || !derivedCourseId}
-            error={
-              !loadingModules && derivedCourseId && modules.length === 0
-                ? "No modules in this course yet — add a module first"
-                : undefined
-            }
-            {...register("moduleId", { required: true })}
-          >
-            {loadingModules ? (
-              <option value="">Loading modules...</option>
-            ) : modules.length === 0 ? (
-              <option value="">No modules available</option>
-            ) : (
-              modules.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.title || m.moduleName}
-                </option>
-              ))
-            )}
-          </Select>
+          {/* Module dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Module <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={moduleId}
+              onValueChange={(val) => setValue("moduleId", val)}
+              disabled={loadingModules || submitting || !derivedCourseId || modules.length === 0}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue
+                  placeholder={
+                    loadingModules
+                      ? "Loading modules..."
+                      : !derivedCourseId
+                      ? "Select Batch first"
+                      : modules.length === 0
+                      ? "No modules available"
+                      : "Select Module"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {modules.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {cleanDisplayString(m.title || m.moduleName)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* Content type dropdown */}
-          <Select
-            label="Content type"
-            disabled={submitting}
-            {...register("type", { required: true })}
-          >
-            {TYPE_OPTIONS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
+          {/* Content Type dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Content type <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={type}
+              onValueChange={(val) => setValue("type", val)}
+              disabled={submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue placeholder="Content Type" />
+              </SelectTrigger>
+              <SelectContent>
+                {TYPE_OPTIONS.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* Duration — only shown for video type */}
           {type === "video" && (
             <Input
               label="Duration (optional)"
-              placeholder="e.g. 12:10"
+              placeholder="e.g. 15m or 1h 30m"
               disabled={submitting}
               {...register("duration")}
             />
@@ -349,11 +384,11 @@ export default function AddLessonModal({
                 submitting ||
                 loadingBatches ||
                 batches.length === 0 ||
-                loadingModules ||
-                modules.length === 0
+                !derivedCourseId ||
+                !moduleId
               }
             >
-              {submitting ? "Adding..." : "Add Lesson"}
+              {submitting ? "Creating..." : "Create Lesson"}
             </Button>
           </DialogFooter>
         </form>

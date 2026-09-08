@@ -1,15 +1,27 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/Dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import FileDropzone from "@/components/ui/FileDropzone";
 import {
   getTrainerBatchesApi,
   getTrainerCoursesApi,
-  getBatchDetailsApi,
   getModulesForCourseApi,
   createQuizApi,
   type BackendBatchItem,
@@ -30,7 +42,6 @@ interface FormValues {
   batchId: string;
   courseId: string;
   moduleId: string;
-  questions: number;
   status: "draft" | "published";
 }
 
@@ -41,8 +52,17 @@ interface CourseOption {
 
 const EXCEL_ACCEPT = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-  "application/vnd.ms-excel": [".xls"]
+  "application/vnd.ms-excel": [".xls"],
 };
+
+function cleanDisplayString(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*cid-[a-zA-Z0-9_-]+/gi, "")
+    .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
+    .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
+    .trim();
+}
 
 function extractErrorMessage(err: any): string {
   const status = err?.response?.status;
@@ -109,22 +129,23 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
     reset,
     watch,
     setValue,
-    formState: { errors }
+    formState: { errors },
   } = useForm<FormValues>({
     defaultValues: {
       title: "",
       batchId: "",
       courseId: "",
       moduleId: "",
-      questions: 10,
-      status: "draft"
-    }
+      status: "published",
+    },
   });
 
   const batchId = watch("batchId");
   const courseId = watch("courseId");
+  const moduleId = watch("moduleId");
+  const status = watch("status");
 
-  // Step 1: When modal opens -> fetch authorized batches and real courses from BigQuery
+  // Step 1: Fetch real authorized batches & courses from BigQuery
   useEffect(() => {
     if (!open) return;
 
@@ -144,19 +165,18 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
         setBatches(batchList);
         setAllCourses(coursesRes?.courses || []);
 
-        const initialBatchId = quiz?.batchId || batchList[0]?.id || "";
+        const initialBatchId = batchList[0]?.id ?? "";
         reset({
           title: quiz?.title || "",
           batchId: initialBatchId,
-          courseId: quiz?.courseId || "",
-          moduleId: quiz?.moduleId || "",
-          questions: quiz?.questions || quiz?.totalQuestions || 10,
-          status: (quiz?.status?.toLowerCase() === "published" ? "published" : "draft") as "draft" | "published"
+          courseId: "",
+          moduleId: "",
+          status: quiz?.status === "draft" ? "draft" : "published",
         });
       })
       .catch((err) => {
         if (cancelled) return;
-        console.error("Failed to load trainer batches or courses for quiz:", err);
+        console.error("Failed to load batches or courses:", err);
         setBatches([]);
         toast.error("Failed to load authorized batches.");
       })
@@ -172,7 +192,7 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
     };
   }, [open, quiz, reset]);
 
-  // Step 2: When Batch changes -> reset Course and Module, load Course for selected Batch
+  // Step 2: When Batch changes -> resolve Course automatically
   useEffect(() => {
     setValue("courseId", "");
     setValue("moduleId", "");
@@ -181,7 +201,6 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
 
     if (!open || !batchId) return;
 
-    let cancelled = false;
     const foundBatch = batches.find((b) => b.id === batchId);
     const targetCourseId = foundBatch?.courseId || foundBatch?.course?.id;
 
@@ -190,7 +209,6 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
       return;
     }
 
-    // Resolve course against allCourses from BigQuery Courses table
     const matched = allCourses.find((c) => (c.id || (c as any).courseId) === targetCourseId);
     if (matched) {
       const courseOpt: CourseOption = {
@@ -207,36 +225,12 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id, { shouldValidate: true });
     } else {
-      setLoadingCourses(true);
-      getBatchDetailsApi(batchId)
-        .then((detail) => {
-          if (cancelled) return;
-          const cId = detail?.courseId || detail?.course?.id;
-          const cName = detail?.courseName || detail?.course?.courseName;
-          if (cId && cName) {
-            const courseOpt: CourseOption = { id: cId, name: cName };
-            setCourses([courseOpt]);
-            setValue("courseId", cId, { shouldValidate: true });
-          } else {
-            setCourses([]);
-          }
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          console.error("Failed to load batch course:", err);
-          setCourses([]);
-        })
-        .finally(() => {
-          if (!cancelled) setLoadingCourses(false);
-        });
+      setCourses([]);
+      setValue("courseId", "");
     }
-
-    return () => {
-      cancelled = true;
-    };
   }, [open, batchId, batches, allCourses, setValue]);
 
-  // Step 3: When Course changes -> reset Module, load Modules for Course
+  // Step 3: When Course changes -> load Modules for that Course
   useEffect(() => {
     setValue("moduleId", "");
     setModules([]);
@@ -268,7 +262,6 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
     };
   }, [open, courseId, setValue]);
 
-  // File selection handler with strict Excel validation (.xlsx, .xls only)
   function handleFileSelected(file: File) {
     setFileError("");
     setSubmitError(null);
@@ -316,7 +309,6 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
       formData.append("batchId", values.batchId.trim());
       formData.append("courseId", values.courseId.trim());
       formData.append("moduleId", values.moduleId.trim());
-      formData.append("numberOfQuestions", String(values.questions));
       formData.append("status", values.status === "published" ? "Published" : "Draft");
 
       const response = await createQuizApi(formData);
@@ -350,7 +342,7 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
         </DialogHeader>
 
         {submitError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
             {submitError}
           </div>
         )}
@@ -364,97 +356,101 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
             {...register("title", { required: "Title is required" })}
           />
 
-          {/* 2. Batch Dropdown (Select first) */}
-          <Select
-            label="Batch"
-            error={errors.batchId?.message}
-            disabled={loadingBatches || submitting}
-            {...register("batchId", { required: "Batch is required" })}
-          >
-            {loadingBatches ? (
-              <option value="">Loading authorized batches...</option>
-            ) : batches.length === 0 ? (
-              <option value="">No authorized batches available</option>
-            ) : (
-              <>
-                <option value="">Select a batch</option>
+          {/* 2. Batch Dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Batch <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={batchId}
+              onValueChange={(val) => setValue("batchId", val, { shouldValidate: true })}
+              disabled={loadingBatches || submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue placeholder={loadingBatches ? "Loading batches..." : "Select Batch"} />
+              </SelectTrigger>
+              <SelectContent>
                 {batches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.batchName || (b as any).name}
-                  </option>
+                  <SelectItem key={b.id} value={b.id}>
+                    {cleanDisplayString(b.batchName || (b as any).name)}
+                  </SelectItem>
                 ))}
-              </>
-            )}
-          </Select>
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* 3. Course (Scoped to selected batch) */}
-          <Select
-            label="Course"
-            error={errors.courseId?.message}
-            disabled={true}
-            {...register("courseId", { required: "Course is required" })}
-          >
-            {loadingCourses ? (
-              <option value="">Resolving course...</option>
-            ) : !batchId ? (
-              <option value="">Select a batch first</option>
-            ) : courses.length === 0 ? (
-              <option value="">No course found for this batch</option>
-            ) : (
-              courses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} 🔒
-                </option>
-              ))
-            )}
-          </Select>
+          {/* 3. Course (Auto-derived from batch, locked) */}
+          <div className="rounded-xl border border-[#F0EAE6] bg-[#FFFBF9] px-3.5 py-2.5">
+            <p className="text-[11px] font-medium text-[#8C7A70]">Allocated Course (Locked)</p>
+            <p className="text-xs font-bold text-[#233047] mt-0.5">
+              {loadingCourses
+                ? "Resolving course..."
+                : courses.length > 0
+                ? cleanDisplayString(courses[0].name)
+                : batchId
+                ? "No course assigned to this batch"
+                : "Select a batch to resolve course"}
+            </p>
+          </div>
 
-          {/* 4. Module (Belonging to selected course) */}
-          <Select
-            label="Module"
-            error={errors.moduleId?.message}
-            disabled={loadingModules || modules.length === 0 || submitting || courses.length === 0}
-            {...register("moduleId", { required: "Module is required" })}
-          >
-            {!batchId ? (
-              <option value="">Select a batch first</option>
-            ) : courses.length === 0 ? (
-              <option value="">No course found for this batch</option>
-            ) : loadingModules ? (
-              <option value="">Loading modules...</option>
-            ) : modules.length === 0 ? (
-              <option value="">No modules found for this course</option>
-            ) : (
-              modules.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.moduleName}
-                </option>
-              ))
-            )}
-          </Select>
+          {/* 4. Module Dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Module <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={moduleId}
+              onValueChange={(val) => setValue("moduleId", val, { shouldValidate: true })}
+              disabled={loadingModules || modules.length === 0 || submitting || !courseId}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue
+                  placeholder={
+                    loadingModules
+                      ? "Loading modules..."
+                      : !courseId
+                      ? "Select Batch first"
+                      : modules.length === 0
+                      ? "No modules found"
+                      : "Select Module"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {modules.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {cleanDisplayString(m.moduleName)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* 5. Number of Questions */}
-          <Input
-            type="number"
-            min={1}
-            label="Number of questions"
-            error={errors.questions?.message}
-            {...register("questions", {
-              required: "Number of questions is required",
-              min: { value: 1, message: "Must have at least 1 question" },
-              valueAsNumber: true
-            })}
-          />
 
-          {/* 6. Status */}
-          <Select label="Status" {...register("status", { required: true })}>
-            <option value="draft">Draft</option>
-            <option value="published">Published</option>
-          </Select>
+
+          {/* 6. Status Dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">Status</label>
+            <Select
+              value={status}
+              onValueChange={(val) => setValue("status", val as "draft" | "published")}
+              disabled={submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue placeholder="Select Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="published">Published</SelectItem>
+                <SelectItem value="draft">Draft</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
           {/* 7. Excel File Upload */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-[#6B5A52]">Excel Question File (.xlsx, .xls)</label>
+            <label className="text-xs font-semibold text-[#6B5A52]">
+              Excel Question File (.xlsx, .xls) <span className="text-red-500">*</span>
+            </label>
             <FileDropzone
               accept={EXCEL_ACCEPT}
               file={selectedFile}
@@ -466,10 +462,15 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
 
           {/* 8. Action Buttons */}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={submitting}
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting || !selectedFile || !batchId || !moduleId}>
               {submitting ? "Creating Quiz..." : isEditing ? "Save Changes" : "Create Quiz"}
             </Button>
           </DialogFooter>

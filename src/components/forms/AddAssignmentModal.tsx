@@ -1,14 +1,26 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/Dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/Dialog";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import {
   getTrainerBatchesApi,
   getTrainerCoursesApi,
-  getBatchDetailsApi,
   createAssignmentApi,
   type BackendBatchItem,
   type TrainerCourseItem,
@@ -31,6 +43,15 @@ interface FormValues {
 interface CourseOption {
   id: string;
   name: string;
+}
+
+function cleanDisplayString(str?: string | null): string {
+  if (!str) return "";
+  return str
+    .replace(/\s*-\s*cid-[a-zA-Z0-9_-]+/gi, "")
+    .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
+    .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
+    .trim();
 }
 
 function extractErrorMessage(err: any): string {
@@ -144,7 +165,7 @@ export default function AddAssignmentModal({
       })
       .catch((err) => {
         if (cancelled) return;
-        console.error("Failed to load trainer batches or courses:", err);
+        console.error("Failed to load batches or courses:", err);
         setBatches([]);
         toast.error("Failed to load authorized batches.");
       })
@@ -160,14 +181,13 @@ export default function AddAssignmentModal({
     };
   }, [open, defaultBatchId, reset]);
 
-  // Step 2: When Batch is selected -> derive Course dynamically
+  // Step 2: Auto-resolve real Course from selected Batch (locked)
   useEffect(() => {
     setValue("courseId", "");
     setCourses([]);
 
     if (!open || !batchId) return;
 
-    let cancelled = false;
     const foundBatch = batches.find((b) => b.id === batchId);
     const targetCourseId = foundBatch?.courseId || foundBatch?.course?.id;
 
@@ -176,7 +196,6 @@ export default function AddAssignmentModal({
       return;
     }
 
-    // Resolve course against allCourses from BigQuery Courses table
     const matched = allCourses.find((c) => (c.id || (c as any).courseId) === targetCourseId);
     if (matched) {
       const courseOpt: CourseOption = {
@@ -193,58 +212,52 @@ export default function AddAssignmentModal({
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id, { shouldValidate: true });
     } else {
-      setLoadingCourses(true);
-      getBatchDetailsApi(batchId)
-        .then((details) => {
-          if (cancelled) return;
-          const cId = details?.courseId || details?.course?.id;
-          const cName = details?.courseName || details?.course?.courseName;
-          if (cId && cName) {
-            const courseOpt: CourseOption = { id: cId, name: cName };
-            setCourses([courseOpt]);
-            setValue("courseId", cId, { shouldValidate: true });
-          } else {
-            setCourses([]);
-          }
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          console.warn("Failed to fetch batch details for course:", err);
-          setCourses([]);
-        })
-        .finally(() => {
-          if (!cancelled) setLoadingCourses(false);
-        });
+      setCourses([]);
+      setValue("courseId", "");
     }
-
-    return () => {
-      cancelled = true;
-    };
   }, [open, batchId, batches, allCourses, setValue]);
 
   async function onSubmit(values: FormValues) {
-    setSubmitting(true);
     setSubmitError(null);
 
+    if (!values.title.trim()) {
+      toast.error("Title is required.");
+      return;
+    }
+    if (!values.batchId) {
+      toast.error("Please select a batch.");
+      return;
+    }
+    if (!values.courseId) {
+      toast.error("No course resolved for the selected batch.");
+      return;
+    }
+    if (!values.dueDate) {
+      toast.error("Please select a due date.");
+      return;
+    }
+
     try {
+      setSubmitting(true);
       const res = await createAssignmentApi({
         title: values.title.trim(),
         batchId: values.batchId.trim(),
         courseId: values.courseId.trim(),
-        dueDate: values.dueDate.trim(),
+        dueDate: values.dueDate,
       });
 
-      if (res.success || res.statusCode === 201) {
-        toast.success(`Assignment "${values.title.trim()}" created successfully!`);
-        onSuccess?.();
+      if (res.success) {
+        toast.success(`Assignment "${values.title}" created successfully`);
+        reset();
         onOpenChange(false);
+        onSuccess?.();
       } else {
         const errorMsg = res.message || "Failed to create assignment.";
         setSubmitError(errorMsg);
         toast.error(errorMsg);
       }
     } catch (err: any) {
-      console.error("Assignment creation error:", err);
+      console.error("Assignment create error:", err);
       const errorMsg = extractErrorMessage(err);
       setSubmitError(errorMsg);
       toast.error(errorMsg);
@@ -253,23 +266,19 @@ export default function AddAssignmentModal({
     }
   }
 
-  const isFormValid =
-    Boolean(titleValue?.trim()) &&
-    Boolean(batchId?.trim()) &&
-    Boolean(courseId?.trim()) &&
-    Boolean(dueDate?.trim());
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create Assignment</DialogTitle>
-          <DialogDescription>Trainees in the selected batch will submit work for you to review and score.</DialogDescription>
+          <DialogDescription>
+            Trainees in the selected batch will receive this assignment to complete and submit.
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           {submitError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-600">
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-600">
               {submitError}
             </div>
           )}
@@ -282,50 +291,42 @@ export default function AddAssignmentModal({
             {...register("title", { required: "Title is required" })}
           />
 
-          {/* 2. Batch Dropdown */}
-          <Select
-            label="Batch"
-            error={errors.batchId?.message}
-            disabled={loadingBatches || submitting}
-            {...register("batchId", { required: "Batch is required" })}
-          >
-            {loadingBatches ? (
-              <option value="">Loading authorized batches...</option>
-            ) : batches.length === 0 ? (
-              <option value="">No authorized batches available</option>
-            ) : (
-              <>
-                <option value="">Select a batch</option>
+          {/* 2. Batch Dropdown using shadcn Select */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#233047] block">
+              Batch <span className="text-red-500">*</span>
+            </label>
+            <Select
+              value={batchId}
+              onValueChange={(val) => setValue("batchId", val, { shouldValidate: true })}
+              disabled={loadingBatches || submitting}
+            >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
+                <SelectValue placeholder={loadingBatches ? "Loading batches..." : "Select Batch"} />
+              </SelectTrigger>
+              <SelectContent>
                 {batches.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.batchName}
-                  </option>
+                  <SelectItem key={b.id} value={b.id}>
+                    {cleanDisplayString(b.batchName)}
+                  </SelectItem>
                 ))}
-              </>
-            )}
-          </Select>
+              </SelectContent>
+            </Select>
+          </div>
 
-          {/* 3. Course Dropdown (dynamically populated based on selected batch) */}
-          <Select
-            label="Course"
-            error={errors.courseId?.message}
-            disabled={true}
-            {...register("courseId", { required: "Course is required" })}
-          >
-            {loadingCourses ? (
-              <option value="">Resolving course...</option>
-            ) : !batchId ? (
-              <option value="">Select a batch first</option>
-            ) : courses.length === 0 ? (
-              <option value="">No course found for this batch</option>
-            ) : (
-              courses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} 🔒
-                </option>
-              ))
-            )}
-          </Select>
+          {/* 3. Course (Auto-derived from batch, locked) */}
+          <div className="rounded-xl border border-[#F0EAE6] bg-[#FFFBF9] px-3.5 py-2.5">
+            <p className="text-[11px] font-medium text-[#8C7A70]">Allocated Course (Locked)</p>
+            <p className="text-xs font-bold text-[#233047] mt-0.5">
+              {loadingCourses
+                ? "Resolving course..."
+                : courses.length > 0
+                ? cleanDisplayString(courses[0].name)
+                : batchId
+                ? "No course assigned to this batch"
+                : "Select a batch to resolve course"}
+            </p>
+          </div>
 
           {/* 4. Due Date */}
           <Input
