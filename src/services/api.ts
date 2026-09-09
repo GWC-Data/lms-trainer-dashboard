@@ -709,37 +709,60 @@ export async function deleteQuizApi(id: string): Promise<{ success: boolean; mes
   return response.data;
 }
 
-export interface AssessmentResultItem {
-  id: string;
-  assessmentId: string;
+export interface TraineeQuizResultItem {
   traineeId: string;
-  traineeName?: string;
-  traineeFirstName?: string;
-  traineeLastName?: string;
-  traineeEmail?: string;
-  score: number;
-  completedAt?: string;
-  createdAt?: string;
+  traineeName: string;
+  traineeEmail: string;
+  status: "Submitted" | "Pending";
+  score: number | null;
+  scorePercentage: number | null;
+  rawScore?: number | null;
+  totalQuestions?: number;
+  completedAt: string | null;
+  passed: boolean | null;
+  attemptNumber?: number | null;
 }
 
-export interface AssessmentResultsResponse {
-  message?: string;
-  assessmentResults?: { data?: AssessmentResultItem[]; results?: AssessmentResultItem[] } | AssessmentResultItem[];
+export interface QuizResultsResponse {
+  success: boolean;
+  assessmentId: string;
+  quiz: {
+    id: string;
+    title: string;
+    courseName: string;
+    batchName: string;
+    moduleName: string;
+    passingScorePct: number;
+    totalQuestions: number;
+    status: string;
+    fileUrl: string | null;
+  };
+  summary: {
+    totalTrainees: number;
+    submitted: number;
+    pending: number;
+    averageScore: number | null;
+  };
+  trainees: TraineeQuizResultItem[];
 }
 
 /**
- * Real Assessment Results API: GET /assessment-results?assessmentId=...
+ * Real Quiz Results API:
+ * Preferred: GET /quizzes/:quizId/results
+ * Fallback: GET /assessment-results?assessmentId=:quizId
  * Authenticated via JWT. Scoped to trainer/admin.
  */
-export async function getQuizResultsApi(assessmentId: string): Promise<AssessmentResultItem[]> {
-  const response = await api.get<AssessmentResultsResponse>("/assessment-results", {
-    params: { assessmentId }
-  });
-  const raw = response.data?.assessmentResults;
-  if (Array.isArray(raw)) return raw;
-  if (raw && Array.isArray((raw as any).data)) return (raw as any).data;
-  if (raw && Array.isArray((raw as any).results)) return (raw as any).results;
-  return [];
+export async function getQuizResultsApi(quizId: string): Promise<QuizResultsResponse> {
+  const cleanId = quizId.trim();
+  try {
+    const response = await api.get<QuizResultsResponse>(`/quizzes/${encodeURIComponent(cleanId)}/results`);
+    return response.data;
+  } catch (err: any) {
+    const response = await api.get<QuizResultsResponse>("/assessment-results", {
+      params: { assessmentId: cleanId }
+    });
+    return response.data;
+  }
 }
 
 

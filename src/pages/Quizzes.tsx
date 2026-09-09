@@ -615,6 +615,7 @@ export default function Quizzes() {
               totalTrainees,
               avgScore,
               status: isPublished ? "published" : "draft",
+              fileUrl: q.fileUrl,
             };
 
             return (
