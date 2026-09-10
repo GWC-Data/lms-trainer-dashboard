@@ -22,6 +22,7 @@ import Attendance from "@/pages/Attendance";
 import Trainees from "@/pages/Trainees";
 import Reports from "@/pages/Reports";
 import Batches from "@/pages/Batches";
+import Calendar from "@/pages/Calendar";
 
 export default function App() {
   return (
@@ -52,6 +53,7 @@ export default function App() {
                 <Route path="/attendance" element={<Attendance />} />
                 <Route path="/trainees" element={<Trainees />} />
                 <Route path="/reports" element={<Reports />} />
+                <Route path="/calendar" element={<Calendar />} />
               </Route>
             </Route>
           </Routes>

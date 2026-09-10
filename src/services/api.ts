@@ -165,12 +165,14 @@ export interface ResetPasswordResponse {
 
 export interface DashboardSummary {
   assignedCourses: number;
-  onlineBatches: number;
-  offlineBatches: number;
+  activeBatches: number;
   totalTrainees: number;
-  atRiskTrainees: number;
-  pendingEvaluations: number;
-  averageAttendance: number;
+  upcomingClasses: number;
+  onlineBatches?: number;
+  offlineBatches?: number;
+  atRiskTrainees?: number;
+  pendingEvaluations?: number;
+  averageAttendance?: number;
 }
 
 export interface DashboardCourse {
@@ -1096,5 +1098,7 @@ export async function getAttendanceByBatchApi(batchId?: string, courseId?: strin
   const response = await api.get<any>("/attendance", { params });
   return response.data;
 }
+
+export * from "./batchEventApi";
 
 

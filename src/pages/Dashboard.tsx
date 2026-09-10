@@ -9,6 +9,7 @@ import {
   MapPin,
   Laptop,
   Clock,
+  Layers,
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
@@ -90,9 +91,11 @@ export default function Dashboard() {
 
   const summary = dashboardData?.summary || {
     assignedCourses: 0,
+    activeBatches: 0,
+    totalTrainees: 0,
+    upcomingClasses: 0,
     onlineBatches: 0,
     offlineBatches: 0,
-    totalTrainees: 0,
     atRiskTrainees: 0,
     pendingEvaluations: 0,
     averageAttendance: 0,
@@ -110,21 +113,21 @@ export default function Dashboard() {
       chip: "bg-[#FBECE7] text-[#DE896A]",
     },
     {
+      label: "Active Batches",
+      value: summary.activeBatches,
+      icon: Layers,
+      chip: "bg-violet-50 text-violet-700",
+    },
+    {
       label: "Total Trainees",
       value: summary.totalTrainees,
       icon: Users,
       chip: "bg-sky-50 text-sky-700",
     },
     {
-      label: "Pending Evaluations",
-      value: summary.pendingEvaluations,
-      icon: ClipboardCheck,
-      chip: "bg-violet-50 text-violet-700",
-    },
-    {
-      label: "Avg. Attendance",
-      value: `${summary.averageAttendance}%`,
-      icon: UserCheck,
+      label: "Upcoming Classes",
+      value: summary.upcomingClasses,
+      icon: Clock,
       chip: "bg-emerald-50 text-emerald-700",
     },
   ];
@@ -192,11 +195,11 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* My Courses pillar */}
+        {/* Courses pillar */}
         <Card className="lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle>My Courses</CardTitle>
+              <CardTitle>Courses</CardTitle>
               <p className="mt-1 text-sm text-[#8C7A70]">
                 Assigned courses across both delivery modes
               </p>

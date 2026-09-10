@@ -12,6 +12,7 @@ import {
   BarChart3,
   LogOut,
   Layers,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
@@ -36,7 +37,7 @@ const sections: NavSection[] = [
   {
     items: [
       { to: "/", label: "Dashboard", icon: LayoutGrid },
-      { to: "/courses", label: "My Courses", icon: BookOpen },
+      { to: "/courses", label: "Courses", icon: BookOpen },
     ],
   },
   {
@@ -58,6 +59,7 @@ const sections: NavSection[] = [
     label: "Operations",
     items: [
       { to: "/batches", label: "Batches", icon: Layers },
+      { to: "/calendar", label: "Calendar", icon: CalendarIcon },
       { to: "/attendance", label: "Attendance", icon: UserCheck },
       { to: "/trainees", label: "Trainees", icon: Users },
       { to: "/reports", label: "Reports", icon: BarChart3 },

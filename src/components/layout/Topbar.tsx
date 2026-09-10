@@ -9,7 +9,7 @@ import {
 
 const LABELS: Record<string, string> = {
   "": "Dashboard",
-  courses: "My Courses",
+  courses: "Courses",
   content: "Content",
   modules: "Modules",
   lessons: "Lessons",
