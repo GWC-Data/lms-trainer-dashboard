@@ -20,6 +20,7 @@ const LABELS: Record<string, string> = {
   attendance: "Attendance",
   trainees: "Trainees",
   reports: "Reports",
+  settings: "Settings",
 };
 
 interface TopbarProps {

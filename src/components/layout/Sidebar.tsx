@@ -10,6 +10,7 @@ import {
   UserCheck,
   Users,
   BarChart3,
+  Settings,
   LogOut,
   Layers,
   Calendar as CalendarIcon,
@@ -65,6 +66,12 @@ const sections: NavSection[] = [
       { to: "/reports", label: "Reports", icon: BarChart3 },
     ],
   },
+  {
+    label: "Account",
+    items: [
+      { to: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 interface SidebarProps {
@@ -85,8 +92,8 @@ export default function Sidebar({ isCollapsed = false }: SidebarProps) {
     ? ((user.firstName?.[0] || "") + (user.lastName?.[0] || "")).toUpperCase() || "TR"
     : "TR";
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     navigate("/login", { replace: true });
   }
 
