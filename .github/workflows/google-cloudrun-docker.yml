@@ -11,6 +11,13 @@ env:
   REGION: asia-south1
   REPOSITORY: cloud-run-source-deploy
   SERVICE: lms-trainer-dashboard
+  # vite inlines this into the bundle at BUILD time, so it is passed as a
+  # --build-arg below. Setting it on the Cloud Run service would do nothing:
+  # by then the JavaScript is already written. It is not a secret -- it ships
+  # inside the bundle and is visible to anyone who opens the site -- so it
+  # lives here rather than in a repository variable that has to be set by hand.
+  # If the backend URL changes, edit this line.
+  VITE_API_BASE_URL: https://teqcertify-lms-backend-91249685769.asia-south1.run.app
 
 jobs:
   deploy:
@@ -23,19 +30,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      # vite inlines VITE_API_BASE_URL at build time, so an unset value silently
-      # ships a bundle that calls "undefined/...". Fail loudly instead.
-      - name: Check required build configuration
-        env:
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-        run: |
-          if [ -z "$VITE_API_BASE_URL" ]; then
-            echo "::error::Repository variable VITE_API_BASE_URL is not set."
-            echo "Set it under Settings > Secrets and variables > Actions > Variables."
-            exit 1
-          fi
-          echo "Building against $VITE_API_BASE_URL"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -52,13 +46,9 @@ jobs:
       - name: Build Docker image
         env:
           IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}
-          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: |
-          docker build \
-            --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL" \
-            -t "$IMAGE:$GITHUB_SHA" \
-            -t "$IMAGE:latest" \
-            .
+          echo "Building against $VITE_API_BASE_URL"
+          docker build             --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL"             -t "$IMAGE:$GITHUB_SHA"             -t "$IMAGE:latest"             .
 
       - name: Push Docker image
         env:
@@ -69,21 +59,8 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy "$SERVICE" \
-            --image "$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE:$GITHUB_SHA" \
-            --region "$REGION" \
-            --project "$PROJECT_ID" \
-            --platform managed \
-            --allow-unauthenticated \
-            --port 8080 \
-            --cpu 1 \
-            --memory 512Mi \
-            --min-instances 0 \
-            --max-instances 2
+          gcloud run deploy "$SERVICE"             --image "$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE:$GITHUB_SHA"             --region "$REGION"             --project "$PROJECT_ID"             --platform managed             --allow-unauthenticated             --port 8080             --cpu 1             --memory 512Mi             --min-instances 0             --max-instances 2
 
       - name: Show service URL
         run: |
-          gcloud run services describe "$SERVICE" \
-            --region "$REGION" \
-            --project "$PROJECT_ID" \
-            --format="value(status.url)"
+          gcloud run services describe "$SERVICE"             --region "$REGION"             --project "$PROJECT_ID"             --format="value(status.url)"
