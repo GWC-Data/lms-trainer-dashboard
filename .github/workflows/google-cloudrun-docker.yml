@@ -1,98 +1,89 @@
 name: Deploy to Cloud Run
 
 on:
-push:
-branches:
-- main
-workflow_dispatch:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 env:
-PROJECT_ID: teqcertify-cloud
-REGION: asia-south1
-REPOSITORY: cloud-run-source-deploy
-SERVICE: lms-trainer-dashboard
+  PROJECT_ID: teqcertify-cloud
+  REGION: asia-south1
+  REPOSITORY: cloud-run-source-deploy
+  SERVICE: lms-trainer-dashboard
 
 jobs:
-deploy:
-runs-on: ubuntu-latest
+  deploy:
+    runs-on: ubuntu-latest
 
-```
-permissions:
-  contents: read
-  id-token: write
+    permissions:
+      contents: read
+      id-token: write
 
-steps:
-  - name: Checkout code
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  # Vite requires VITE_API_BASE_URL during the Docker build.
-  - name: Check required build configuration
-    env:
-      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-    run: |
-      if [ -z "$VITE_API_BASE_URL" ]; then
-        echo "::error::Repository variable VITE_API_BASE_URL is not set."
-        echo "Set it under Settings > Secrets and variables > Actions > Variables."
-        exit 1
-      fi
+      # vite inlines VITE_API_BASE_URL at build time, so an unset value silently
+      # ships a bundle that calls "undefined/...". Fail loudly instead.
+      - name: Check required build configuration
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: |
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "::error::Repository variable VITE_API_BASE_URL is not set."
+            echo "Set it under Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+          echo "Building against $VITE_API_BASE_URL"
 
-      echo "Building against $VITE_API_BASE_URL"
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-  # Authenticate to Google Cloud
-  - name: Authenticate to Google Cloud
-    uses: google-github-actions/auth@v2
-    with:
-      credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-  # Install and configure gcloud
-  - name: Set up Google Cloud SDK
-    uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 
-  # Configure Docker authentication for Artifact Registry
-  - name: Configure Docker for Artifact Registry
-    run: |
-      gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+      - name: Build Docker image
+        env:
+          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+        run: |
+          docker build \
+            --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL" \
+            -t "$IMAGE:$GITHUB_SHA" \
+            -t "$IMAGE:latest" \
+            .
 
-  # Build Docker image
-  - name: Build Docker image
-    env:
-      IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}
-      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
-    run: |
-      docker build \
-        --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL" \
-        -t "$IMAGE:$GITHUB_SHA" \
-        -t "$IMAGE:latest" \
-        .
+      - name: Push Docker image
+        env:
+          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}
+        run: |
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:latest"
 
-  # Push both SHA and latest tags
-  - name: Push Docker image
-    env:
-      IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}
-    run: |
-      docker push "$IMAGE:$GITHUB_SHA"
-      docker push "$IMAGE:latest"
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE:$GITHUB_SHA" \
+            --region "$REGION" \
+            --project "$PROJECT_ID" \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --cpu 1 \
+            --memory 512Mi \
+            --min-instances 0 \
+            --max-instances 2
 
-  # Deploy to Cloud Run
-  - name: Deploy to Cloud Run
-    run: |
-      gcloud run deploy "$SERVICE" \
-        --image "$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE:$GITHUB_SHA" \
-        --region "$REGION" \
-        --project "$PROJECT_ID" \
-        --platform managed \
-        --allow-unauthenticated \
-        --port 8080 \
-        --cpu 1 \
-        --memory 512Mi \
-        --min-instances 0 \
-        --max-instances 2
-
-  # Display deployed Cloud Run URL
-  - name: Show service URL
-    run: |
-      gcloud run services describe "$SERVICE" \
-        --region "$REGION" \
-        --project "$PROJECT_ID" \
-        --format="value(status.url)"
-```
+      - name: Show service URL
+        run: |
+          gcloud run services describe "$SERVICE" \
+            --region "$REGION" \
+            --project "$PROJECT_ID" \
+            --format="value(status.url)"
