@@ -508,7 +508,8 @@ export interface ModulesResponse {
 
 export interface CreateModulePayload {
   title: string;
-  courseId: string;
+  courseId?: string;
+  batchId?: string;
 }
 
 export interface CreateModuleResponse {
@@ -546,7 +547,8 @@ export async function createModuleApi(payload: CreateModulePayload): Promise<Cre
   const response = await api.post<CreateModuleResponse>("/modules", {
     title: payload.title.trim(),
     moduleName: payload.title.trim(),
-    courseId: payload.courseId
+    courseId: payload.courseId,
+    batchId: payload.batchId
   });
   return response.data;
 }

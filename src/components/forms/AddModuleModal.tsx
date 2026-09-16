@@ -116,6 +116,7 @@ export default function AddModuleModal({
       setSubmitError(null);
       const res = await createModuleApi({
         title: values.title.trim(),
+        batchId: values.batchId,
         courseId: derivedCourseId,
       });
 
