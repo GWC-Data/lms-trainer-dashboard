@@ -18,6 +18,7 @@ import {
   ChevronRight as ChevronRightIcon,
   AlertCircle,
   Trash2,
+  Pencil,
 } from "lucide-react";
 import {
   Select,
@@ -37,6 +38,7 @@ import LoadingSpinner from "@/components/loadingSpinner";
 import {
   fetchBatchEventsForTraineeApi,
   createBatchEventApi,
+  updateBatchEventApi,
   deleteBatchEventApi,
   BatchEvent
 } from "@/services/batchEventApi";
@@ -136,6 +138,15 @@ const Calendar: React.FC = () => {
   const [eventToDelete, setEventToDelete] = useState<UnifiedEventItem | null>(null);
   const [isDeletingEvent, setIsDeletingEvent] = useState<boolean>(false);
 
+  // Edit Event State
+  const [eventToEdit, setEventToEdit] = useState<UnifiedEventItem | null>(null);
+  const [isUpdatingEvent, setIsUpdatingEvent] = useState<boolean>(false);
+  const [editBatchId, setEditBatchId] = useState<string>("");
+  const [editTitle, setEditTitle] = useState<string>("");
+  const [editType, setEditType] = useState<string>("session");
+  const [editEventDate, setEditEventDate] = useState<string>(moment().format("YYYY-MM-DD"));
+  const [editDescription, setEditDescription] = useState<string>("");
+
   // Add Event Form State
   const [formBatchId, setFormBatchId] = useState<string>("");
   const [formTitle, setFormTitle] = useState<string>("");
@@ -208,6 +219,7 @@ const Calendar: React.FC = () => {
 
   const isSameBatchSafe = (b1: string | null | undefined, b2: string | null | undefined): boolean => {
     if (!b1 || !b2) return true;
+    if (String(b1).trim().toLowerCase() === "all" || String(b2).trim().toLowerCase() === "all") return true;
     return String(b1).trim().toLowerCase() === String(b2).trim().toLowerCase();
   };
 
@@ -220,7 +232,8 @@ const Calendar: React.FC = () => {
   const loadBatchEvents = async (targetBatch?: string) => {
     try {
       const activeBatch = targetBatch !== undefined ? targetBatch : (selectedBatch || batchId || undefined);
-      const data = await fetchBatchEventsForTraineeApi(activeBatch);
+      const queryBatch = activeBatch === "all" ? undefined : activeBatch;
+      const data = await fetchBatchEventsForTraineeApi(queryBatch);
       setBatchEvents(data);
     } catch (error) {
       console.error("Failed to fetch batch events", error);
@@ -497,7 +510,7 @@ const Calendar: React.FC = () => {
       })
       .forEach((be) => {
         const batchObj = batchFilters.find((b) => isSameBatchSafe(b.id, be.batchId));
-        const displayBatch = batchObj?.name || batchName || "Active Batch";
+        const displayBatch = be.batchId === "all" ? "All Batches" : (batchObj?.name || batchName || "Active Batch");
         items.push({
           id: be.id || `be-${be.title}-${be.eventDate}`,
           category: "batch-event",
@@ -603,15 +616,20 @@ const Calendar: React.FC = () => {
         setFormType("session");
 
         // Immediately switch calendar to the created event's batch
-        setSelectedBatch(formBatchId);
-        setBatchId(formBatchId);
-        const matched = batchFilters.find((b) => isSameBatchSafe(b.id, formBatchId));
-        if (matched) {
-          setBatchName(matched.name);
+        const targetBatch = formBatchId || "all";
+        setSelectedBatch(targetBatch);
+        setBatchId(targetBatch);
+        if (targetBatch === "all") {
+          setBatchName("All Batches");
+        } else {
+          const matched = batchFilters.find((b) => isSameBatchSafe(b.id, targetBatch));
+          if (matched) {
+            setBatchName(matched.name);
+          }
         }
 
         // Immediately refresh real batch events from BigQuery for this batch
-        await loadBatchEvents(formBatchId);
+        await loadBatchEvents(targetBatch);
 
         // Switch calendar selected date to the event date to see it right away
         setSelectedDate(moment(formEventDate));
@@ -625,6 +643,86 @@ const Calendar: React.FC = () => {
       toast.error(msg);
     } finally {
       setIsSavingEvent(false);
+    }
+  };
+
+  // Open Edit Event Modal
+  const handleOpenEditModal = (item: UnifiedEventItem) => {
+    setEventToEdit(item);
+    setEditBatchId(item.batchId || selectedBatch || (batchFilters[0]?.id ?? ""));
+    setEditTitle(item.title || "");
+    const rawType = (item.type || "event").toLowerCase();
+    setEditType(
+      ["session", "holiday", "exam", "postpond", "announcement", "event"].includes(rawType)
+        ? rawType
+        : "event"
+    );
+    const dateStr = toDateString(item.date);
+    setEditEventDate(dateStr || moment().format("YYYY-MM-DD"));
+    setEditDescription(item.description || "");
+  };
+
+  // Handle Update Event (Admin/Trainer)
+  const handleUpdateEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!eventToEdit || !eventToEdit.id) return;
+
+    if (!editBatchId) {
+      toast.error("Please select a batch.");
+      return;
+    }
+    if (!editTitle.trim()) {
+      toast.error("Please enter an event title.");
+      return;
+    }
+    if (!editEventDate) {
+      toast.error("Please select an event date.");
+      return;
+    }
+
+    try {
+      setIsUpdatingEvent(true);
+      const res = await updateBatchEventApi(eventToEdit.id, {
+        batchId: editBatchId,
+        title: editTitle.trim(),
+        eventDate: editEventDate,
+        type: editType as any,
+        description: editDescription.trim() || undefined,
+      });
+
+      if (res?.success !== false) {
+        toast.success("Event updated successfully!");
+        setEventToEdit(null);
+        setSelectedDetailEvent(null);
+
+        // Switch to the updated event's batch if needed
+        const targetBatch = editBatchId || "all";
+        setSelectedBatch(targetBatch);
+        setBatchId(targetBatch);
+        if (targetBatch === "all") {
+          setBatchName("All Batches");
+        } else {
+          const matched = batchFilters.find((b) => isSameBatchSafe(b.id, targetBatch));
+          if (matched) {
+            setBatchName(matched.name);
+          }
+        }
+
+        // Refresh batch events from BigQuery
+        await loadBatchEvents(targetBatch);
+
+        // Switch calendar view to the updated date
+        setSelectedDate(moment(editEventDate));
+        setCurrentMonth(moment(editEventDate));
+      } else {
+        toast.error(res?.message || "Failed to update batch event.");
+      }
+    } catch (err: any) {
+      console.error("Error updating event:", err);
+      const msg = err.response?.data?.message || "Failed to update event. Please verify permissions.";
+      toast.error(msg);
+    } finally {
+      setIsUpdatingEvent(false);
     }
   };
 
@@ -727,9 +825,13 @@ const Calendar: React.FC = () => {
                   setSelectedBatch(val);
                   setBatchId(val);
                   setFormBatchId(val);
-                  const matched = batchFilters.find((b) => isSameBatchSafe(b.id, val));
-                  if (matched) {
-                    setBatchName(matched.name);
+                  if (val === "all") {
+                    setBatchName("All Batches");
+                  } else {
+                    const matched = batchFilters.find((b) => isSameBatchSafe(b.id, val));
+                    if (matched) {
+                      setBatchName(matched.name);
+                    }
                   }
                   loadBatchEvents(val);
                 }}
@@ -738,6 +840,12 @@ const Calendar: React.FC = () => {
                   <SelectValue placeholder="Select Batch" />
                 </SelectTrigger>
                 <SelectContent className="max-h-60">
+                  <SelectItem
+                    value="all"
+                    className="cursor-pointer text-xs sm:text-sm py-2 font-semibold text-[#DE6841]"
+                  >
+                    All Batches
+                  </SelectItem>
                   {batchFilters.map((b) => (
                     <SelectItem
                       key={b.id}
@@ -893,19 +1001,32 @@ const Calendar: React.FC = () => {
                           {item.type}
                         </span>
 
-                        {/* Delete Event Icon (Admin / Authorized Trainer only) */}
+                        {/* Edit & Delete Event Icons (Admin / Authorized Trainer only) */}
                         {(isAdmin || isTrainer) && item.category === "batch-event" && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEventToDelete(item);
-                            }}
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Event"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenEditModal(item);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-[#DE6841] hover:bg-[#FDF3EF] rounded-lg transition-colors cursor-pointer"
+                              title="Edit Event"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEventToDelete(item);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete Event"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1092,21 +1213,35 @@ const Calendar: React.FC = () => {
               </div>
             </div>
 
-            {/* Modal Footer with Delete Action for authorized managers */}
+            {/* Modal Footer with Edit and Delete Action for authorized managers */}
             <div className="mt-6 pt-3 border-t border-gray-100 flex items-center justify-between">
               {(isAdmin || isTrainer) && selectedDetailEvent.category === "batch-event" ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const evt = selectedDetailEvent;
-                    setSelectedDetailEvent(null);
-                    setEventToDelete(evt);
-                  }}
-                  className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl font-medium text-sm transition-colors flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>Delete Event</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const evt = selectedDetailEvent;
+                      setSelectedDetailEvent(null);
+                      handleOpenEditModal(evt);
+                    }}
+                    className="px-4 py-2 bg-[#FDF3EF] hover:bg-[#FBE6DF] text-[#DE6841] rounded-xl font-medium text-sm transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Pencil className="w-4 h-4" />
+                    <span>Edit Event</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const evt = selectedDetailEvent;
+                      setSelectedDetailEvent(null);
+                      setEventToDelete(evt);
+                    }}
+                    className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl font-medium text-sm transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Delete Event</span>
+                  </button>
+                </div>
               ) : (
                 <div />
               )}
@@ -1197,6 +1332,12 @@ const Calendar: React.FC = () => {
                     <SelectValue placeholder="Select Batch" />
                   </SelectTrigger>
                   <SelectContent className="max-h-56">
+                    <SelectItem
+                      value="all"
+                      className="cursor-pointer text-xs sm:text-sm py-2 font-semibold text-[#DE6841]"
+                    >
+                      All Batches
+                    </SelectItem>
                     {batchFilters.map((b) => (
                       <SelectItem
                         key={b.id}
@@ -1310,6 +1451,165 @@ const Calendar: React.FC = () => {
                     </>
                   ) : (
                     <span>Save Event</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Edit Event Modal for Admin / Trainer */}
+      {eventToEdit && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-gray-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Update Batch Event</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Update event details, schedule date, or announcement.
+                </p>
+              </div>
+              <button
+                onClick={() => setEventToEdit(null)}
+                className="p-1 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateEvent} className="space-y-4">
+              {/* Batch Selector (shadcn Select dropdown) */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                  Batch <span className="text-red-500">*</span>
+                </label>
+                <Select
+                  value={editBatchId || undefined}
+                  onValueChange={(val) => setEditBatchId(val)}
+                >
+                  <SelectTrigger className="h-10 rounded-xl border-gray-200 bg-gray-50 text-xs sm:text-sm text-gray-900 focus:ring-[#DE6841]/20">
+                    <SelectValue placeholder="Select Batch" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-56">
+                    <SelectItem
+                      value="all"
+                      className="cursor-pointer text-xs sm:text-sm py-2 font-semibold text-[#DE6841]"
+                    >
+                      All Batches
+                    </SelectItem>
+                    {batchFilters.map((b) => (
+                      <SelectItem
+                        key={b.id}
+                        value={b.id}
+                        className="cursor-pointer text-xs sm:text-sm py-2"
+                      >
+                        {b.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Event Title */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                  Event Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="e.g., Fun Friday or AI Class"
+                  className="w-full text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#DE6841]"
+                  required
+                />
+              </div>
+
+              {/* Event Type & Date Row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                    Event Type <span className="text-red-500">*</span>
+                  </label>
+                  <Select
+                    value={editType}
+                    onValueChange={(val) => setEditType(val)}
+                  >
+                    <SelectTrigger className="h-10 rounded-xl border-gray-200 bg-gray-50 text-xs sm:text-sm text-gray-900 focus:ring-[#DE6841]/20">
+                      <SelectValue placeholder="Select Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="session" className="cursor-pointer text-xs sm:text-sm py-2">
+                        Class Session
+                      </SelectItem>
+                      <SelectItem value="holiday" className="cursor-pointer text-xs sm:text-sm py-2">
+                        Holiday
+                      </SelectItem>
+                      <SelectItem value="exam" className="cursor-pointer text-xs sm:text-sm py-2">
+                        Assessment / Exam
+                      </SelectItem>
+                      <SelectItem value="postpond" className="cursor-pointer text-xs sm:text-sm py-2">
+                        Postponed Session
+                      </SelectItem>
+                      <SelectItem value="announcement" className="cursor-pointer text-xs sm:text-sm py-2">
+                        Announcement
+                      </SelectItem>
+                      <SelectItem value="event" className="cursor-pointer text-xs sm:text-sm py-2">
+                        General Event
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                    Event Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={editEventDate}
+                    onChange={(e) => setEditEventDate(e.target.value)}
+                    className="w-full text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#DE6841]"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  rows={3}
+                  placeholder="Add notes, schedule details, or instructions..."
+                  className="w-full text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#DE6841]"
+                />
+              </div>
+
+              {/* Form Actions */}
+              <div className="pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEventToEdit(null)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium text-sm transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingEvent}
+                  className="px-4 py-2 bg-[#DE6841] hover:bg-[#C85732] text-white rounded-xl font-medium text-sm transition-all shadow-xs disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                >
+                  {isUpdatingEvent ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Updating...</span>
+                    </>
+                  ) : (
+                    <span>Update Event</span>
                   )}
                 </button>
               </div>

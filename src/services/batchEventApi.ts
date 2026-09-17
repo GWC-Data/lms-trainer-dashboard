@@ -6,7 +6,7 @@ export interface BatchEvent {
   title: string;
   description?: string;
   eventDate: string;
-  type: "holiday" | "event";
+  type: string;
   createdBy?: string;
   updatedBy?: string;
   createdAt?: string;
@@ -51,7 +51,7 @@ export const fetchBatchEventsForTraineeApi = async (batchId?: string): Promise<B
 
     // For Admin / Trainer: query /batch-events with selected batchId
     const res = await api.get<BatchEventApiResponse>("/batch-events", {
-      params: batchId ? { batchId } : undefined,
+      params: batchId && batchId !== "all" ? { batchId } : undefined,
     });
     return res.data?.events || [];
   } catch (error) {

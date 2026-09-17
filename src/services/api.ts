@@ -635,6 +635,28 @@ export async function uploadDocumentApi(formData: FormData): Promise<UploadDocum
   return response.data;
 }
 
+/**
+ * Real Update Document API: PUT /documents/:id
+ */
+export async function updateDocumentApi(
+  id: string,
+  title: string
+): Promise<{ success: boolean; message: string; document?: BackendDocumentItem }> {
+  const response = await api.put<{ success: boolean; message: string; document?: BackendDocumentItem }>(
+    `/documents/${id}`,
+    { title }
+  );
+  return response.data;
+}
+
+/**
+ * Real Delete Document API: DELETE /documents/:id
+ */
+export async function deleteDocumentApi(id: string): Promise<{ success: boolean; message: string }> {
+  const response = await api.delete<{ success: boolean; message: string }>(`/documents/${id}`);
+  return response.data;
+}
+
 // ─── Quizzes ──────────────────────────────────────────────────────────────────
 
 export interface BackendQuizItem {
@@ -710,6 +732,26 @@ export async function createQuizApi(formData: FormData): Promise<CreateQuizRespo
  */
 export async function deleteQuizApi(id: string): Promise<{ success: boolean; message: string }> {
   const response = await api.delete<{ success: boolean; message: string }>(`/quizzes/${id}`);
+  return response.data;
+}
+
+export interface UpdateQuizPayload {
+  title?: string;
+  status?: "draft" | "published";
+  totalQuestions?: number;
+  passingScorePct?: number;
+  maxAttempts?: number;
+  durationMinutes?: number;
+}
+
+/**
+ * Real Update Quiz API: PUT /quizzes/:id
+ */
+export async function updateQuizApi(
+  id: string,
+  payload: UpdateQuizPayload
+): Promise<{ success: boolean; message: string }> {
+  const response = await api.put<{ success: boolean; message: string }>(`/quizzes/${id}`, payload);
   return response.data;
 }
 
@@ -1086,6 +1128,31 @@ export interface BulkAttendancePayload {
 
 export async function bulkSaveAttendanceApi(payload: BulkAttendancePayload): Promise<{ success: boolean; message: string }> {
   const response = await api.post<{ success: boolean; message: string }>("/attendance/bulk", payload);
+  return response.data;
+}
+
+export interface MarkAttendancePayload {
+  userId: string;
+  batchId: string;
+  courseId?: string;
+  moduleId?: string;
+  attendanceStatus: 'present' | 'absent' | 'late';
+  sessionDate?: string;
+}
+
+/**
+ * Real per-trainee Attendance API: POST /attendance/manual
+ * Upserts a single trainee's attendance status for the given session date —
+ * triggered immediately when a trainer picks Present/Absent/Late for that row,
+ * instead of waiting for a separate bulk "Finalize" save.
+ */
+export async function markAttendanceApi(payload: MarkAttendancePayload): Promise<{
+  message: string;
+  attendanceId?: string;
+  status?: string;
+  sessionDate?: string;
+}> {
+  const response = await api.post("/attendance/manual", payload);
   return response.data;
 }
 
