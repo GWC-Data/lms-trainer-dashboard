@@ -26,17 +26,25 @@ function isTokenExpired(token: string | null): boolean {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return true;
-    const base64Url = parts[1];
-    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split("")
-        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
-        .join("")
-    );
+    let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padLength = (4 - (base64.length % 4)) % 4;
+    base64 += "=".repeat(padLength);
+
+    let jsonPayload: string;
+    try {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      jsonPayload = new TextDecoder("utf-8").decode(bytes);
+    } catch {
+      jsonPayload = atob(base64);
+    }
+
     const payload = JSON.parse(jsonPayload);
-    if (payload.exp && Date.now() >= payload.exp * 1000) {
-      return true;
+    if (payload && typeof payload.exp === "number") {
+      return Date.now() >= payload.exp * 1000;
     }
     return false;
   } catch {
