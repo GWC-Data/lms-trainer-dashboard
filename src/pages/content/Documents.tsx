@@ -13,6 +13,9 @@ import {
   Layers,
   RotateCcw,
   Users,
+  Pencil,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
@@ -26,16 +29,19 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import UploadDocumentModal from "@/components/forms/UploadDocumentModal";
+import RenameDocumentModal from "@/components/forms/RenameDocumentModal";
 import { triggerDownload } from "@/lib/utils";
 import { formatFileSize } from "@/components/ui/FileDropzone";
 import {
   getDocumentsApi,
   getTrainerBatchesApi,
   getTrainerCoursesApi,
+  deleteDocumentApi,
   type BackendDocumentItem,
   type BackendBatchItem,
   type TrainerCourseItem,
 } from "@/services/api";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const fileToneMap: Record<string, "red" | "blue" | "amber" | "green" | "neutral"> = {
@@ -93,6 +99,8 @@ export default function Documents() {
   const [documents, setDocuments] = useState<BackendDocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingDocument, setEditingDocument] = useState<BackendDocumentItem | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 1. Parallel Load: Batches & Courses
@@ -221,6 +229,26 @@ export default function Documents() {
   function handleDownload(d: BackendDocumentItem) {
     if (d.fileUrl) {
       triggerDownload(d.fileUrl, d.title);
+    }
+  }
+
+  async function handleDelete(d: BackendDocumentItem) {
+    if (!window.confirm(`Are you sure you want to delete "${d.title}"?`)) return;
+
+    setDeletingId(d.id);
+    try {
+      const res = await deleteDocumentApi(d.id);
+      if (res.success) {
+        toast.success(`"${d.title}" deleted successfully.`);
+        await fetchDocuments();
+      } else {
+        toast.error(res.message || "Failed to delete material.");
+      }
+    } catch (err: any) {
+      console.error("Error deleting document:", err);
+      toast.error(err?.response?.data?.message || "Failed to delete material.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -589,21 +617,46 @@ export default function Documents() {
                         {formatDate(d.uploadedAt || d.createdAt)}
                       </td>
 
-                      {/* ACTION: DOWNLOAD */}
-                      <td className="px-5 py-4 text-right">
-                        {d.fileUrl ? (
+                      {/* ACTION: DOWNLOAD / EDIT / DELETE */}
+                      <td className="px-5 py-4">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {d.fileUrl ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDownload(d)}
+                              className="h-8 rounded-lg border-[#F0DED4] bg-white px-2.5 text-xs text-[#DE896A] hover:bg-[#FBECE7] hover:text-[#C26D4D]"
+                            >
+                              <Download className="mr-1 h-3.5 w-3.5" />
+                              Download
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-[#C7B6AC]">No File</span>
+                          )}
                           <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
-                            onClick={() => handleDownload(d)}
-                            className="h-8 rounded-lg border-[#F0DED4] bg-white px-2.5 text-xs text-[#DE896A] hover:bg-[#FBECE7] hover:text-[#C26D4D]"
+                            className="h-8 rounded-lg px-2 text-[#3A2A22] hover:text-[#DE896A] hover:bg-[#FBECE7]"
+                            onClick={() => setEditingDocument(d)}
+                            title="Edit material"
                           >
-                            <Download className="mr-1 h-3.5 w-3.5" />
-                            Download
+                            <Pencil className="h-3.5 w-3.5" />
                           </Button>
-                        ) : (
-                          <span className="text-xs text-[#C7B6AC]">No File</span>
-                        )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 rounded-lg px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            disabled={deletingId === d.id}
+                            onClick={() => handleDelete(d)}
+                            title="Delete material"
+                          >
+                            {deletingId === d.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -624,6 +677,13 @@ export default function Documents() {
             : undefined
         }
         defaultModuleId={moduleId || undefined}
+        onSuccess={fetchDocuments}
+      />
+
+      <RenameDocumentModal
+        open={Boolean(editingDocument)}
+        onOpenChange={(open) => !open && setEditingDocument(null)}
+        document={editingDocument}
         onSuccess={fetchDocuments}
       />
     </div>

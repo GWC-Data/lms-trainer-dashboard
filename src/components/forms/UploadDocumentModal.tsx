@@ -23,11 +23,9 @@ import {
   getTrainerBatchesApi,
   getTrainerCoursesApi,
   getModulesForCourseApi,
-  getLessonsForModuleApi,
   uploadDocumentApi,
   type BackendBatchItem,
   type BackendModuleSimpleItem,
-  type BackendLessonItem,
   type TrainerCourseItem,
 } from "@/services/api";
 
@@ -45,7 +43,6 @@ interface FormValues {
   batchId: string;
   courseId: string;
   moduleId: string;
-  lessonId: string;
 }
 
 interface SelectedFile {
@@ -121,12 +118,10 @@ export default function UploadDocumentModal({
   const [allCourses, setAllCourses] = useState<TrainerCourseItem[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [modules, setModules] = useState<BackendModuleSimpleItem[]>([]);
-  const [lessons, setLessons] = useState<BackendLessonItem[]>([]);
 
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [loadingModules, setLoadingModules] = useState(false);
-  const [loadingLessons, setLoadingLessons] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -146,14 +141,12 @@ export default function UploadDocumentModal({
       batchId: defaultBatchId ?? "",
       courseId: defaultCourseId ?? "",
       moduleId: defaultModuleId ?? "",
-      lessonId: "",
     },
   });
 
   const batchId = watch("batchId");
   const courseId = watch("courseId");
   const moduleId = watch("moduleId");
-  const lessonId = watch("lessonId");
 
   // Step 1: Fetch authorized batches and courses from BigQuery when modal opens
   useEffect(() => {
@@ -194,7 +187,6 @@ export default function UploadDocumentModal({
           batchId: initialBatchId || "",
           courseId: "",
           moduleId: defaultModuleId || "",
-          lessonId: "",
         });
       })
       .catch((err) => {
@@ -219,10 +211,8 @@ export default function UploadDocumentModal({
   useEffect(() => {
     setValue("courseId", "");
     setValue("moduleId", "");
-    setValue("lessonId", "");
     setCourses([]);
     setModules([]);
-    setLessons([]);
 
     if (!open || !batchId) return;
 
@@ -258,9 +248,7 @@ export default function UploadDocumentModal({
   // Step 3: When Course changes -> load Modules for that Course
   useEffect(() => {
     setValue("moduleId", "");
-    setValue("lessonId", "");
     setModules([]);
-    setLessons([]);
 
     if (!open || !courseId) return;
 
@@ -292,37 +280,6 @@ export default function UploadDocumentModal({
       cancelled = true;
     };
   }, [open, courseId, defaultModuleId, setValue]);
-
-  // Step 4: When Module changes -> load Lessons for Module & Course
-  useEffect(() => {
-    setValue("lessonId", "");
-    setLessons([]);
-
-    if (!open || !moduleId) return;
-
-    let cancelled = false;
-    setLoadingLessons(true);
-    getLessonsForModuleApi(moduleId, courseId)
-      .then((lessonList) => {
-        if (cancelled) return;
-        setLessons(lessonList);
-        if (lessonList.length > 0) {
-          setValue("lessonId", lessonList[0].id);
-        }
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error("Failed to load lessons for module:", err);
-        setLessons([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingLessons(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open, moduleId, courseId, setValue]);
 
   function handleFileSelected(file: File) {
     setSelected((prev) => {
@@ -357,10 +314,6 @@ export default function UploadDocumentModal({
       setSubmitError("Please select a module.");
       return;
     }
-    if (!values.lessonId) {
-      setSubmitError("Please select a lesson.");
-      return;
-    }
 
     try {
       setSubmitting(true);
@@ -372,7 +325,6 @@ export default function UploadDocumentModal({
       formData.append("batchId", values.batchId);
       formData.append("courseId", values.courseId);
       formData.append("moduleId", values.moduleId);
-      formData.append("lessonId", values.lessonId);
 
       const res = await uploadDocumentApi(formData);
       if (res.success) {
@@ -396,7 +348,7 @@ export default function UploadDocumentModal({
         <DialogHeader>
           <DialogTitle>Upload Material</DialogTitle>
           <DialogDescription>
-            Attach reference material, worksheets, or presentations to a specific lesson.
+            Attach reference material, worksheets, or presentations to a specific module.
           </DialogDescription>
         </DialogHeader>
 
@@ -510,39 +462,6 @@ export default function UploadDocumentModal({
             </Select>
           </div>
 
-          {/* 6. Lesson Dropdown using shadcn Select */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-[#233047] block">
-              Lesson <span className="text-red-500">*</span>
-            </label>
-            <Select
-              value={lessonId}
-              onValueChange={(val) => setValue("lessonId", val)}
-              disabled={loadingLessons || !moduleId || lessons.length === 0 || submitting}
-            >
-              <SelectTrigger className="h-10 rounded-xl border-[#F0EAE6] text-xs font-medium text-[#233047]">
-                <SelectValue
-                  placeholder={
-                    loadingLessons
-                      ? "Loading lessons..."
-                      : !moduleId
-                      ? "Select Module first"
-                      : lessons.length === 0
-                      ? "No lessons available"
-                      : "Select Lesson"
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {lessons.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>
-                    {cleanDisplayString(l.lessonTitle)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
           <DialogFooter>
             <Button
               type="button"
@@ -560,8 +479,7 @@ export default function UploadDocumentModal({
                 batches.length === 0 ||
                 !batchId ||
                 !courseId ||
-                !moduleId ||
-                !lessonId
+                !moduleId
               }
             >
               {submitting ? "Uploading..." : "Upload Material"}

@@ -1,0 +1,66 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: teqcertify-cloud
+  REGION: asia-south1
+  REPOSITORY: cloud-run-source-deploy
+  SERVICE: lms-trainer-dashboard
+  # vite inlines this into the bundle at BUILD time, so it is passed as a
+  # --build-arg below. Setting it on the Cloud Run service would do nothing:
+  # by then the JavaScript is already written. It is not a secret -- it ships
+  # inside the bundle and is visible to anyone who opens the site -- so it
+  # lives here rather than in a repository variable that has to be set by hand.
+  # If the backend URL changes, edit this line.
+  VITE_API_BASE_URL: https://teqcertify-lms-backend-91249685769.asia-south1.run.app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build Docker image
+        env:
+          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}
+        run: |
+          echo "Building against $VITE_API_BASE_URL"
+          docker build             --build-arg VITE_API_BASE_URL="$VITE_API_BASE_URL"             -t "$IMAGE:$GITHUB_SHA"             -t "$IMAGE:latest"             .
+
+      - name: Push Docker image
+        env:
+          IMAGE: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}
+        run: |
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE"             --image "$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE:$GITHUB_SHA"             --region "$REGION"             --project "$PROJECT_ID"             --platform managed             --allow-unauthenticated             --port 8080             --cpu 1             --memory 512Mi             --min-instances 0             --max-instances 2
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe "$SERVICE"             --region "$REGION"             --project "$PROJECT_ID"             --format="value(status.url)"

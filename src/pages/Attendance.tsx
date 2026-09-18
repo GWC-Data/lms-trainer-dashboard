@@ -12,6 +12,7 @@ import {
   Check,
   AlertCircle,
   BookOpen,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/Card";
@@ -25,6 +26,7 @@ import {
   getTrainerCoursesApi,
   getTraineesApi,
   bulkSaveAttendanceApi,
+  markAttendanceApi,
   getAttendanceByBatchApi,
   type BackendBatchItem,
   type TrainerCourseItem,
@@ -68,6 +70,20 @@ function bqStr(val: unknown): string {
   return String(val);
 }
 
+/**
+ * Local calendar date as YYYY-MM-DD. `.toISOString()` converts to UTC first, which
+ * rolls the date back a day for anyone east of UTC during their early-morning hours
+ * (e.g. IST 12:00am-5:30am) — attendance saved "for today" would then be stored
+ * under yesterday's UTC date, making it look like it never saved once the local
+ * clock (and this function, computed fresh) crossed into the next UTC day.
+ */
+function localDateStr(d: Date = new Date()): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 const PAGE_SIZE = 8;
 
 interface RosterEntry {
@@ -80,6 +96,7 @@ interface RosterEntry {
   initials: string;
   status: AttendanceStatus;
   remark: string;
+  hasRecord: boolean;
 }
 
 export default function Attendance() {
@@ -102,6 +119,13 @@ export default function Attendance() {
   const [page, setPage] = useState(0);
   const [saving, setSaving] = useState(false);
   const [finalized, setFinalized] = useState<Record<string, boolean>>({});
+  const [savingRowKey, setSavingRowKey] = useState<string | null>(null);
+
+  // Selected register date — defaults to today; picking an earlier date shows
+  // that day's attendance (read-only) across the selected batch(es).
+  const todayStr = localDateStr();
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const isToday = selectedDate === todayStr;
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 1. Parallel Initial Load: Batches & Courses
@@ -193,10 +217,9 @@ export default function Attendance() {
   // 3. Fetch Roster & Existing Attendance for Current Filter
   // ─────────────────────────────────────────────────────────────────────────────
   const fetchRosterData = useCallback(
-    async (batchId: string, courseId: string, currentBatches: BackendBatchItem[]) => {
+    async (batchId: string, courseId: string, currentBatches: BackendBatchItem[], dateStr: string) => {
       try {
         setLoadingRoster(true);
-        const todayStr = new Date().toISOString().split("T")[0];
 
         const params: { batchId?: string; courseId?: string; limit?: number } = { limit: 100 };
         if (batchId !== "all") {
@@ -215,15 +238,15 @@ export default function Attendance() {
 
         const list: TraineeListItem[] = traineesRes.data?.trainees || [];
 
-        // Build today's existing attendance map
+        // Build the selected date's existing attendance map
         const attMap = new Map<string, { status: AttendanceStatus; remark: string }>();
         const attList: any[] = attRes?.attendance?.data || attRes?.attendance || [];
-        let hasTodayRecord = false;
+        let hasRecordForDate = false;
 
         for (const rec of attList) {
           const recDate = rec.sessionDate || (rec.createdAt ? String(rec.createdAt).split("T")[0] : "");
-          if (recDate === todayStr) {
-            hasTodayRecord = true;
+          if (recDate === dateStr) {
+            hasRecordForDate = true;
             const s = String(rec.status || rec.attendance || "").toLowerCase();
             let st: AttendanceStatus = "P";
             if (s === "absent") st = "A";
@@ -238,8 +261,9 @@ export default function Attendance() {
           }
         }
 
-        if (batchId !== "all" && hasTodayRecord) {
-          setFinalized((prev) => ({ ...prev, [batchId]: true }));
+        const finalizedKey = batchId !== "all" ? `${batchId}_${dateStr}` : null;
+        if (finalizedKey) {
+          setFinalized((prev) => ({ ...prev, [finalizedKey]: hasRecordForDate }));
         }
 
         const newRoster: RosterEntry[] = list.map((t) => {
@@ -263,6 +287,7 @@ export default function Attendance() {
             initials,
             status: existing?.status || "P",
             remark: existing?.remark || "",
+            hasRecord: Boolean(existing),
           };
         });
 
@@ -280,10 +305,16 @@ export default function Attendance() {
 
   useEffect(() => {
     if (!loadingInitial) {
-      fetchRosterData(selectedBatchId, selectedCourseId, batches);
+      fetchRosterData(selectedBatchId, selectedCourseId, batches, selectedDate);
       setPage(0);
     }
-  }, [selectedBatchId, selectedCourseId, loadingInitial, batches, fetchRosterData]);
+  }, [selectedBatchId, selectedCourseId, selectedDate, loadingInitial, batches, fetchRosterData]);
+
+  const handleDateChange = (newDate: string) => {
+    if (!newDate) return;
+    setSelectedDate(newDate);
+    setPage(0);
+  };
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 4. Filter Handlers
@@ -323,7 +354,18 @@ export default function Attendance() {
   // ─────────────────────────────────────────────────────────────────────────────
   // 5. In-Row Status & Remark Handlers
   // ─────────────────────────────────────────────────────────────────────────────
+  const statusApiMap: Record<AttendanceStatus, "present" | "absent" | "late"> = {
+    P: "present",
+    A: "absent",
+    L: "late",
+  };
+
+  // Fires an immediate per-trainee save (POST /attendance/manual) the moment a
+  // status is picked, instead of only persisting on the separate "Finalize" bulk
+  // save. Upserts today's attendance row for that specific trainee id.
   const setStatus = (traineeId: string, status: AttendanceStatus, batchId?: string) => {
+    const rowKey = `${traineeId}_${batchId || selectedBatchId}`;
+
     setRoster((prev) =>
       prev.map((r) => {
         if (r.traineeId === traineeId && (!batchId || r.batchId === batchId)) {
@@ -332,6 +374,42 @@ export default function Attendance() {
         return r;
       })
     );
+
+    if (!isToday) return;
+
+    const targetBatchId = batchId || (selectedBatchId !== "all" ? selectedBatchId : undefined);
+    if (!targetBatchId) {
+      toast.error("Select a specific batch before marking attendance.");
+      return;
+    }
+    const targetBatch = batches.find((b) => b.id === targetBatchId);
+    const courseId = targetBatch?.course?.id || targetBatch?.courseId || undefined;
+
+    setSavingRowKey(rowKey);
+    markAttendanceApi({
+      userId: traineeId,
+      batchId: targetBatchId,
+      courseId,
+      attendanceStatus: statusApiMap[status],
+      sessionDate: selectedDate,
+    })
+      .then(() => {
+        setFinalized((prev) => ({ ...prev, [`${targetBatchId}_${selectedDate}`]: true }));
+        setRoster((prev) =>
+          prev.map((r) =>
+            r.traineeId === traineeId && (!batchId || r.batchId === batchId)
+              ? { ...r, hasRecord: true }
+              : r
+          )
+        );
+      })
+      .catch((err) => {
+        console.error("Failed to save attendance for trainee:", traineeId, err);
+        toast.error(err?.response?.data?.message || "Failed to save attendance for this trainee.");
+      })
+      .finally(() => {
+        setSavingRowKey((prev) => (prev === rowKey ? null : prev));
+      });
   };
 
   const setRemark = (traineeId: string, remark: string, batchId?: string) => {
@@ -370,7 +448,7 @@ export default function Attendance() {
       const payload = {
         batchId: selectedBatch.id,
         courseId,
-        sessionDate: new Date().toISOString().split("T")[0],
+        sessionDate: selectedDate,
         records: roster.map((r) => ({
           userId: r.traineeId,
           status: statusMap[r.status],
@@ -379,10 +457,10 @@ export default function Attendance() {
       };
 
       await bulkSaveAttendanceApi(payload);
-      setFinalized((prev) => ({ ...prev, [selectedBatch.id]: true }));
-      toast.success(`Register finalized and saved for ${cleanDisplayString(selectedBatch.batchName)}`);
+      setFinalized((prev) => ({ ...prev, [`${selectedBatch.id}_${selectedDate}`]: true }));
+      toast.success(`Register saved for ${cleanDisplayString(selectedBatch.batchName)}`);
       // Refresh saved attendance
-      fetchRosterData(selectedBatch.id, selectedCourseId, batches);
+      fetchRosterData(selectedBatch.id, selectedCourseId, batches, selectedDate);
     } catch (err: any) {
       console.error("Failed to save attendance:", err);
       const msg = err?.response?.data?.message || err?.message || "Failed to save attendance.";
@@ -421,7 +499,7 @@ export default function Attendance() {
   const pageStart = page * PAGE_SIZE;
   const pageRows = filteredRoster.slice(pageStart, pageStart + PAGE_SIZE);
 
-  const todayFormatted = new Date().toLocaleDateString("en-US", {
+  const selectedDateFormatted = new Date(`${selectedDate}T00:00:00`).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -603,10 +681,18 @@ export default function Attendance() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3 text-sm text-[#6B5A52]">
-              <span className="flex items-center gap-1.5 rounded-xl bg-white/70 px-3.5 py-2 backdrop-blur-sm border border-[#F0DED4]/60 font-medium">
-                <Calendar className="h-4 w-4 text-[#DE896A]" />
-                Today, {todayFormatted}
-              </span>
+              <div className="flex items-center gap-1.5 rounded-xl bg-white/70 pl-3.5 pr-2 py-1.5 backdrop-blur-sm border border-[#F0DED4]/60 font-medium">
+                <Calendar className="h-4 w-4 text-[#DE896A] shrink-0" />
+                {isToday && <span className="whitespace-nowrap">Today,</span>}
+                <input
+                  type="date"
+                  value={selectedDate}
+                  max={todayStr}
+                  onChange={(e) => handleDateChange(e.target.value)}
+                  className="h-7 rounded-lg border-none bg-transparent px-1 text-sm font-medium text-[#3A2A22] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/30 cursor-pointer"
+                  aria-label="Select attendance date"
+                />
+              </div>
               <span className="flex items-center gap-1.5 rounded-xl bg-white/70 px-3.5 py-2 backdrop-blur-sm border border-[#F0DED4]/60 font-medium">
                 <Users className="h-4 w-4 text-[#DE896A]" />
                 {counts.total} enrolled trainee{counts.total === 1 ? "" : "s"}
@@ -750,8 +836,13 @@ export default function Attendance() {
 
                         {/* STATUS (Single shadcn Select Dropdown) */}
                         <td className="px-5 py-3.5">
+                          {!isToday && !row.hasRecord ? (
+                            <Badge tone="neutral" className="text-xs">No Record</Badge>
+                          ) : (
+                          <div className="flex items-center gap-2">
                           <Select
                             value={row.status}
+                            disabled={!isToday}
                             onValueChange={(val: AttendanceStatus) =>
                               setStatus(row.traineeId, val, row.batchId)
                             }
@@ -764,7 +855,8 @@ export default function Attendance() {
                                 row.status === "A" &&
                                   "border-red-200 bg-red-50 text-red-800 hover:bg-red-100/70",
                                 row.status === "L" &&
-                                  "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70"
+                                  "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70",
+                                !isToday && "opacity-70 cursor-not-allowed"
                               )}
                             >
                               <SelectValue />
@@ -790,15 +882,21 @@ export default function Attendance() {
                               </SelectItem>
                             </SelectContent>
                           </Select>
+                          {savingRowKey === `${row.traineeId}_${row.batchId || selectedBatchId}` && (
+                            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#DE896A]" />
+                          )}
+                          </div>
+                          )}
                         </td>
 
                         {/* REMARKS */}
                         <td className="px-5 py-3.5">
                           <Input
                             value={row.remark}
+                            disabled={!isToday}
                             onChange={(e) => setRemark(row.traineeId, e.target.value, row.batchId)}
-                            placeholder="Add note..."
-                            className="h-9 w-full min-w-[140px] max-w-[200px] rounded-xl border-[#F0DED4] bg-white px-2.5 text-xs text-[#3A2A22] placeholder:text-[#C7B6AC]"
+                            placeholder={isToday ? "Add note..." : "—"}
+                            className="h-9 w-full min-w-[140px] max-w-[200px] rounded-xl border-[#F0DED4] bg-white px-2.5 text-xs text-[#3A2A22] placeholder:text-[#C7B6AC] disabled:opacity-70 disabled:cursor-not-allowed"
                           />
                         </td>
                       </tr>
@@ -863,22 +961,22 @@ export default function Attendance() {
                 <div className="rounded-xl bg-white/20 px-3.5 py-3 text-xs font-medium text-white/95">
                   Select a specific batch to record or finalize register.
                 </div>
+              ) : !isToday ? (
+                <div className="rounded-xl bg-white/20 px-3.5 py-3 text-xs font-medium text-white/95">
+                  Viewing attendance for {selectedDateFormatted}. Switch to today to edit.
+                </div>
               ) : (
                 <Button
                   variant="outline"
                   onClick={handleFinalize}
-                  disabled={
-                    saving ||
-                    (selectedBatch && finalized[selectedBatch.id]) ||
-                    roster.length === 0
-                  }
+                  disabled={saving || roster.length === 0}
                   className="w-full justify-center border-white/40 bg-white font-semibold text-[#8A442E] shadow-sm hover:bg-white/95 disabled:cursor-not-allowed disabled:opacity-80"
                 >
                   <CheckSquare className="mr-1.5 h-4 w-4" />
                   {saving
                     ? "Saving..."
-                    : selectedBatch && finalized[selectedBatch.id]
-                    ? "Register Finalized"
+                    : selectedBatch && finalized[`${selectedBatch.id}_${selectedDate}`]
+                    ? "Update Register"
                     : "Finalize Register"}
                 </Button>
               )}

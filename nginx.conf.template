@@ -1,0 +1,32 @@
+server {
+    # Cloud Run injects PORT; the nginx entrypoint renders it in from
+    # /etc/nginx/templates at container start.
+    listen       ${PORT};
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    gzip            on;
+    gzip_types      text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # NOTE: vite.config.ts forces unhashed output names (assets/[name].js), so
+    # asset URLs are reused across deploys and MUST NOT be cached long-term --
+    # doing so pins browsers to a stale bundle. Revalidate every request.
+    location /assets/ {
+        add_header Cache-Control "no-cache";
+    }
+
+    # The entry document must never be cached, or a deploy keeps serving the
+    # old bundle references.
+    location = /index.html {
+        add_header Cache-Control "no-store";
+    }
+
+    # SPA: unknown paths are client-side routes, not 404s (same intent as the
+    # rewrite rule in vercel.json).
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

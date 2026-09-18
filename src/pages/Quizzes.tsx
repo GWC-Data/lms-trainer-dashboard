@@ -4,6 +4,7 @@ import {
   Plus,
   ClipboardList,
   Trash2,
+  Pencil,
   Loader2,
   Search,
   X,
@@ -311,6 +312,11 @@ export default function Quizzes() {
 
   function openCreate() {
     setEditingQuiz(null);
+    setFormOpen(true);
+  }
+
+  function openEdit(quiz: Quiz) {
+    setEditingQuiz(quiz);
     setFormOpen(true);
   }
 
@@ -703,6 +709,15 @@ export default function Quizzes() {
                       onClick={() => setResultsQuiz(modalQuiz)}
                     >
                       View Results
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-[#3A2A22] hover:text-[#DE896A] hover:bg-[#FBECE7] rounded-xl px-2.5"
+                      onClick={() => openEdit(modalQuiz)}
+                      title="Edit quiz"
+                    >
+                      <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
                       size="sm"

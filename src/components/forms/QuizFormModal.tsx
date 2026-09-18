@@ -24,6 +24,7 @@ import {
   getTrainerCoursesApi,
   getModulesForCourseApi,
   createQuizApi,
+  updateQuizApi,
   type BackendBatchItem,
   type BackendModuleSimpleItem,
   type TrainerCourseItem,
@@ -288,6 +289,38 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
 
   async function onSubmit(values: FormValues) {
     setSubmitError(null);
+
+    // Editing only updates title/status/question-count — batch/course/module/file are fixed at creation.
+    if (isEditing && quiz) {
+      setSubmitting(true);
+      try {
+        const response = await updateQuizApi(quiz.id, {
+          title: values.title.trim(),
+          status: values.status,
+          totalQuestions:
+            values.numberOfQuestions && values.numberOfQuestions.trim()
+              ? Number(values.numberOfQuestions.trim())
+              : undefined,
+        });
+        if (response.success) {
+          toast.success(`Quiz "${values.title}" updated successfully`);
+          onSuccess?.();
+          onOpenChange(false);
+        } else {
+          const msg = response.message || "Failed to update quiz.";
+          setSubmitError(msg);
+          toast.error(msg);
+        }
+      } catch (err: any) {
+        console.error("Error updating quiz:", err);
+        const errMsg = extractErrorMessage(err);
+        setSubmitError(errMsg);
+        toast.error(errMsg);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
 
     if (!selectedFile) {
       setFileError("An Excel question file (.xlsx or .xls) is required.");
