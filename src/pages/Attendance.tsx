@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import {
-  Calendar,
+  Calendar as CalendarIcon,
   Clock,
   CheckSquare,
   Search,
@@ -32,6 +32,8 @@ import {
   type TrainerCourseItem,
   type TraineeListItem,
 } from "@/services/api";
+import { fetchBatchClassScheduleByBatchIdApi } from "@/helpers/api/batchClassScheduleApi";
+import { fetchBatchEventsForTraineeApi, type BatchEvent } from "@/services/batchEventApi";
 import {
   Select,
   SelectContent,
@@ -39,8 +41,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
+import { Calendar } from "@/components/ui/Calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import type { AttendanceStatus } from "@/types";
 import { cn } from "@/lib/utils";
+import PageLoader from "@/components/ui/PageLoader";
 
 function cleanDisplayString(str?: string | null): string {
   if (!str) return "";
@@ -94,7 +99,7 @@ interface RosterEntry {
   name: string;
   email: string;
   initials: string;
-  status: AttendanceStatus;
+  status?: AttendanceStatus;
   remark: string;
   hasRecord: boolean;
 }
@@ -126,6 +131,14 @@ export default function Attendance() {
   const todayStr = localDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const isToday = selectedDate === todayStr;
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+
+  // Track whether the selected batch (or any authorized batch) has an actual session on selectedDate
+  const [hasSessionForSelectedDate, setHasSessionForSelectedDate] = useState<boolean>(true);
+
+  // In-memory cache for batch class schedules and batch events to avoid repeated API requests
+  const scheduleCacheRef = useRef<Map<string, any[]>>(new Map());
+  const eventsCacheRef = useRef<Map<string, BatchEvent[]>>(new Map());
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 1. Parallel Initial Load: Batches & Courses
@@ -216,12 +229,80 @@ export default function Attendance() {
   // ─────────────────────────────────────────────────────────────────────────────
   // 3. Fetch Roster & Existing Attendance for Current Filter
   // ─────────────────────────────────────────────────────────────────────────────
+  const getBatchSchedulesAndEvents = useCallback(async (bId: string) => {
+    let schedules = scheduleCacheRef.current.get(bId);
+    if (!schedules) {
+      try {
+        schedules = await fetchBatchClassScheduleByBatchIdApi(bId);
+        scheduleCacheRef.current.set(bId, Array.isArray(schedules) ? schedules : []);
+      } catch {
+        schedules = [];
+        scheduleCacheRef.current.set(bId, []);
+      }
+    }
+
+    let events = eventsCacheRef.current.get(bId);
+    if (!events) {
+      try {
+        events = await fetchBatchEventsForTraineeApi(bId);
+        eventsCacheRef.current.set(bId, Array.isArray(events) ? events : []);
+      } catch {
+        events = [];
+        eventsCacheRef.current.set(bId, []);
+      }
+    }
+
+    return {
+      schedules: schedules || [],
+      events: events || [],
+    };
+  }, []);
+
+  const checkBatchSessionForDate = useCallback(
+    (
+      bId: string,
+      targetDate: string,
+      schedules: any[],
+      events: BatchEvent[],
+      attList: any[]
+    ) => {
+      // 1. Real historical attendance records for this batch on targetDate
+      const hasRecordedAttendance = attList.some((rec) => {
+        const recBatchId = rec.batchId || "";
+        const recDate = rec.sessionDate || (rec.createdAt ? String(rec.createdAt).split("T")[0] : "");
+        return recBatchId === bId && recDate === targetDate;
+      });
+
+      // 2. Class schedule in batchClassSchedules
+      const hasClassSchedule = schedules.some((sch) => {
+        if (!sch) return false;
+        const start = sch.startDate ? String(sch.startDate).split("T")[0] : "";
+        const end = sch.endDate ? String(sch.endDate).split("T")[0] : start;
+        if (!start) return false;
+        return targetDate >= start && targetDate <= end;
+      });
+
+      // 3. Batch event for this batch on targetDate (excluding holidays)
+      const hasBatchEvent = events.some((evt) => {
+        if (!evt || !evt.eventDate) return false;
+        const evtDate = String(evt.eventDate).split("T")[0];
+        if (evtDate !== targetDate) return false;
+        const type = String(evt.type || "").toLowerCase();
+        if (type === "holiday") return false;
+        return true;
+      });
+
+      return hasRecordedAttendance || hasClassSchedule || hasBatchEvent;
+    },
+    []
+  );
+
   const fetchRosterData = useCallback(
     async (batchId: string, courseId: string, currentBatches: BackendBatchItem[], dateStr: string) => {
       try {
         setLoadingRoster(true);
 
-        const params: { batchId?: string; courseId?: string; limit?: number } = { limit: 100 };
+        const params: { batchId?: string; courseId?: string; limit?: number } = { limit: 1000 };
         if (batchId !== "all") {
           params.batchId = batchId;
         } else if (courseId !== "all" && courseId !== "none") {
@@ -232,31 +313,72 @@ export default function Attendance() {
           getTraineesApi(params),
           getAttendanceByBatchApi(
             batchId !== "all" ? batchId : undefined,
-            courseId !== "all" && courseId !== "none" ? courseId : undefined
+            courseId !== "all" && courseId !== "none" ? courseId : undefined,
+            dateStr
           ).catch(() => null),
         ]);
 
         const list: TraineeListItem[] = traineesRes.data?.trainees || [];
-
-        // Build the selected date's existing attendance map
-        const attMap = new Map<string, { status: AttendanceStatus; remark: string }>();
         const attList: any[] = attRes?.attendance?.data || attRes?.attendance || [];
+
+        // Determine which authorized batches had an actual session/class on dateStr
+        const targetBatches = batchId !== "all"
+          ? currentBatches.filter((b) => b.id === batchId)
+          : currentBatches;
+
+        const batchSessionResults = await Promise.all(
+          targetBatches.map(async (b) => {
+            const { schedules, events } = await getBatchSchedulesAndEvents(b.id);
+            const hasSession = checkBatchSessionForDate(b.id, dateStr, schedules, events, attList);
+            return { batchId: b.id, hasSession };
+          })
+        );
+
+        const batchesWithSession = new Set(
+          batchSessionResults.filter((r) => r.hasSession).map((r) => r.batchId)
+        );
+
+        const currentScopeHasSession = batchId !== "all"
+          ? batchesWithSession.has(batchId)
+          : batchesWithSession.size > 0;
+
+        setHasSessionForSelectedDate(currentScopeHasSession);
+
+        // Build the selected date's existing attendance map strictly for batches with active sessions
+        const attMap = new Map<string, { status: AttendanceStatus; remark: string }>();
         let hasRecordForDate = false;
 
-        for (const rec of attList) {
-          const recDate = rec.sessionDate || (rec.createdAt ? String(rec.createdAt).split("T")[0] : "");
-          if (recDate === dateStr) {
-            hasRecordForDate = true;
-            const s = String(rec.status || rec.attendance || "").toLowerCase();
-            let st: AttendanceStatus = "P";
-            if (s === "absent") st = "A";
-            else if (s === "late") st = "L";
+        // Status priority for multi-batch resolution: P > L > A
+        const statusPriority: Record<AttendanceStatus, number> = { P: 3, L: 2, A: 1 };
 
-            if (rec.userId && rec.batchId) {
-              attMap.set(`${rec.userId}_${rec.batchId}`, { status: st, remark: rec.remark || "" });
-            }
-            if (rec.userId && !attMap.has(rec.userId)) {
-              attMap.set(rec.userId, { status: st, remark: rec.remark || "" });
+        if (currentScopeHasSession) {
+          for (const rec of attList) {
+            const recDate = rec.sessionDate || (rec.createdAt ? String(rec.createdAt).split("T")[0] : "");
+            if (recDate === dateStr) {
+              const recBatchId = rec.batchId || "";
+              // Only batches that actually had a session on dateStr contribute attendance
+              if (recBatchId && !batchesWithSession.has(recBatchId)) {
+                continue;
+              }
+
+              hasRecordForDate = true;
+              const s = String(rec.status || rec.attendance || "").toLowerCase();
+              let st: AttendanceStatus = "P";
+              if (s === "absent") st = "A";
+              else if (s === "late") st = "L";
+
+              // Always store the batch-specific key
+              if (rec.userId && recBatchId) {
+                attMap.set(`${rec.userId}_${recBatchId}`, { status: st, remark: rec.remark || "" });
+              }
+
+              // For the userId-only key, keep highest-priority status across active batches
+              if (rec.userId) {
+                const existingByUser = attMap.get(rec.userId);
+                if (!existingByUser || statusPriority[st] > statusPriority[existingByUser.status]) {
+                  attMap.set(rec.userId, { status: st, remark: rec.remark || "" });
+                }
+              }
             }
           }
         }
@@ -266,7 +388,26 @@ export default function Attendance() {
           setFinalized((prev) => ({ ...prev, [finalizedKey]: hasRecordForDate }));
         }
 
-        const newRoster: RosterEntry[] = list.map((t) => {
+        // Deduplicate trainees by unique trainee user ID:
+        // A trainee enrolled in multiple batches must count as ONE unique trainee user.
+        const uniqueTraineeMap = new Map<string, TraineeListItem>();
+        for (const t of list) {
+          const tId = t.id || (t as any).traineeId;
+          if (!tId) continue;
+          if (!uniqueTraineeMap.has(tId)) {
+            uniqueTraineeMap.set(tId, { ...t, id: tId });
+          } else {
+            // Aggregate batch names for display in multi-batch scenarios
+            const existing = uniqueTraineeMap.get(tId)!;
+            const currentBName = t.batchName || currentBatches.find((b) => b.id === t.batchId)?.batchName;
+            if (currentBName && existing.batchName && !existing.batchName.includes(currentBName)) {
+              existing.batchName = `${existing.batchName}, ${currentBName}`;
+            }
+          }
+        }
+        const uniqueList = Array.from(uniqueTraineeMap.values());
+
+        const newRoster: RosterEntry[] = uniqueList.map((t) => {
           const displayName = t.name || (t as any).fullName || "Trainee";
           const initials = getInitials(displayName);
           const bId = t.batchId || (batchId !== "all" ? batchId : "");
@@ -276,16 +417,35 @@ export default function Attendance() {
             t.courseName || (t as any).course?.courseName || parentBatch?.course?.courseName || "General Course"
           );
 
+          // Check if this trainee's batch had a session on the selected date
+          const traineeBatchHasSession = bId ? batchesWithSession.has(bId) : currentScopeHasSession;
+
+          // If no session existed for this batch on dateStr, trainee has NO record and NO status
+          if (!traineeBatchHasSession) {
+            return {
+              traineeId: t.id,
+              batchId: bId,
+              batchName: bName,
+              courseName: cName,
+              name: cleanDisplayString(displayName),
+              email: t.email || "",
+              initials,
+              status: undefined,
+              remark: "",
+              hasRecord: false,
+            };
+          }
+
           const existing = attMap.get(`${t.id}_${bId}`) || attMap.get(t.id);
           return {
-            traineeId: t.id || (t as any).traineeId || "",
+            traineeId: t.id,
             batchId: bId,
             batchName: bName,
             courseName: cName,
             name: cleanDisplayString(displayName),
             email: t.email || "",
             initials,
-            status: existing?.status || "P",
+            status: existing ? existing.status : undefined,
             remark: existing?.remark || "",
             hasRecord: Boolean(existing),
           };
@@ -300,7 +460,7 @@ export default function Attendance() {
         setLoadingRoster(false);
       }
     },
-    []
+    [getBatchSchedulesAndEvents, checkBatchSessionForDate]
   );
 
   useEffect(() => {
@@ -364,12 +524,17 @@ export default function Attendance() {
   // status is picked, instead of only persisting on the separate "Finalize" bulk
   // save. Upserts today's attendance row for that specific trainee id.
   const setStatus = (traineeId: string, status: AttendanceStatus, batchId?: string) => {
+    if (!hasSessionForSelectedDate) {
+      toast.error("No class/session is scheduled for this date.");
+      return;
+    }
+
     const rowKey = `${traineeId}_${batchId || selectedBatchId}`;
 
     setRoster((prev) =>
       prev.map((r) => {
         if (r.traineeId === traineeId && (!batchId || r.batchId === batchId)) {
-          return { ...r, status };
+          return { ...r, status, hasRecord: true };
         }
         return r;
       })
@@ -431,6 +596,10 @@ export default function Attendance() {
       toast.error("Please select a specific batch to record attendance.");
       return;
     }
+    if (!hasSessionForSelectedDate) {
+      toast.error("No class/session is scheduled for this date.");
+      return;
+    }
     if (roster.length === 0) {
       toast.error("No trainees enrolled in this batch to mark attendance for.");
       return;
@@ -449,11 +618,13 @@ export default function Attendance() {
         batchId: selectedBatch.id,
         courseId,
         sessionDate: selectedDate,
-        records: roster.map((r) => ({
-          userId: r.traineeId,
-          status: statusMap[r.status],
-          remark: r.remark || undefined,
-        })),
+        records: roster
+          .filter((r): r is RosterEntry & { status: AttendanceStatus } => Boolean(r.status))
+          .map((r) => ({
+            userId: r.traineeId,
+            status: statusMap[r.status],
+            remark: r.remark || undefined,
+          })),
       };
 
       await bulkSaveAttendanceApi(payload);
@@ -486,14 +657,28 @@ export default function Attendance() {
   }, [roster, searchQuery]);
 
   const counts = useMemo(() => {
-    const present = roster.filter((r) => r.status === "P").length;
-    const absent = roster.filter((r) => r.status === "A").length;
-    const late = roster.filter((r) => r.status === "L").length;
+    // If no class/session occurred on the selected date, all attendance counts are strictly 0
+    if (!hasSessionForSelectedDate) {
+      return { total: roster.length, present: 0, absent: 0, late: 0 };
+    }
+    // Count every trainee whose current status is Present, Absent, or Late strictly from real records
+    const present = roster.filter((r) => r.hasRecord && r.status === "P").length;
+    const absent = roster.filter((r) => r.hasRecord && r.status === "A").length;
+    const late = roster.filter((r) => r.hasRecord && r.status === "L").length;
     return { total: roster.length, present, absent, late };
-  }, [roster]);
+  }, [roster, hasSessionForSelectedDate]);
 
-  const attendanceRate =
+  // Independent percentage calculations derived strictly from real attendance records
+  const presentPercentage =
     counts.total > 0 ? Math.round((counts.present / counts.total) * 100) : 0;
+  const absentPercentage =
+    counts.total > 0 ? Math.round((counts.absent / counts.total) * 100) : 0;
+  const latePercentage =
+    counts.total > 0 ? Math.round((counts.late / counts.total) * 100) : 0;
+
+  // Overall Attendance Rate strictly: Present trainees / total authorized unique trainees
+  const overallAttendanceRate = presentPercentage;
+  const attendanceRate = overallAttendanceRate;
 
   const totalPages = Math.max(1, Math.ceil(filteredRoster.length / PAGE_SIZE));
   const pageStart = page * PAGE_SIZE;
@@ -505,30 +690,24 @@ export default function Attendance() {
     year: "numeric",
   });
 
+  const displayDateText = useMemo(() => {
+    const [year, month, day] = selectedDate.split("-");
+    const formatted = `${day}-${month}-${year}`;
+    return isToday ? `Today, ${formatted}` : formatted;
+  }, [selectedDate, isToday]);
+
+  const parsedSelectedDate = useMemo(() => {
+    const [y, m, d] = selectedDate.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }, [selectedDate]);
+
   const isAllSelected = selectedBatchId === "all";
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 8. Skeleton Loading UI
   // ─────────────────────────────────────────────────────────────────────────────
   if (loadingInitial) {
-    return (
-      <div className="w-full min-w-0 max-w-full space-y-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="h-8 w-48 animate-pulse rounded-lg bg-gray-200" />
-          <div className="flex gap-3">
-            <div className="h-10 w-56 animate-pulse rounded-xl bg-gray-200" />
-            <div className="h-10 w-48 animate-pulse rounded-xl bg-gray-200" />
-          </div>
-        </div>
-        <Card className="h-44 w-full animate-pulse border-[#F0DAC9] bg-gradient-to-br from-[#FDF1EA] to-[#F5D1C4]" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i} className="h-28 animate-pulse border-[#F5E2DA] bg-gray-100" />
-          ))}
-        </div>
-        <Card className="h-96 w-full animate-pulse border-[#F5E2DA] bg-gray-50" />
-      </div>
-    );
+    return <PageLoader text="Loading..." />;
   }
 
   return (
@@ -681,18 +860,35 @@ export default function Attendance() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3 text-sm text-[#6B5A52]">
-              <div className="flex items-center gap-1.5 rounded-xl bg-white/70 pl-3.5 pr-2 py-1.5 backdrop-blur-sm border border-[#F0DED4]/60 font-medium">
-                <Calendar className="h-4 w-4 text-[#DE896A] shrink-0" />
-                {isToday && <span className="whitespace-nowrap">Today,</span>}
-                <input
-                  type="date"
-                  value={selectedDate}
-                  max={todayStr}
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  className="h-7 rounded-lg border-none bg-transparent px-1 text-sm font-medium text-[#3A2A22] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/30 cursor-pointer"
-                  aria-label="Select attendance date"
-                />
-              </div>
+              <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 rounded-xl bg-white/70 px-3.5 py-1.5 backdrop-blur-sm border border-[#F0DED4]/60 font-medium text-sm text-[#3A2A22] hover:bg-white hover:border-[#DE896A]/50 transition-colors focus:outline-none focus:ring-2 focus:ring-[#DE896A]/30 cursor-pointer"
+                    aria-label="Select attendance date"
+                  >
+                    <CalendarIcon className="h-4 w-4 text-[#DE896A] shrink-0" />
+                    <span className="font-semibold text-[#DE896A]">Calendar</span>
+                    <span className="text-sm font-medium text-[#3A2A22]">{displayDateText}</span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0 rounded-2xl border border-[#F0DED4] bg-white shadow-xl shadow-black/5" align="end">
+                  <Calendar
+                    mode="single"
+                    selected={parsedSelectedDate}
+                    onSelect={(d) => {
+                      if (d) {
+                        const y = d.getFullYear();
+                        const m = String(d.getMonth() + 1).padStart(2, "0");
+                        const day = String(d.getDate()).padStart(2, "0");
+                        handleDateChange(`${y}-${m}-${day}`);
+                        setDatePickerOpen(false);
+                      }
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
               <span className="flex items-center gap-1.5 rounded-xl bg-white/70 px-3.5 py-2 backdrop-blur-sm border border-[#F0DED4]/60 font-medium">
                 <Users className="h-4 w-4 text-[#DE896A]" />
                 {counts.total} enrolled trainee{counts.total === 1 ? "" : "s"}
@@ -719,6 +915,7 @@ export default function Attendance() {
             TOTAL TRAINEES
           </p>
           <p className="mt-2 text-3xl font-bold text-[#3A2A22]">{counts.total}</p>
+          <p className="mt-1 text-xs font-semibold text-transparent select-none" aria-hidden="true">&nbsp;</p>
         </Card>
 
         <Card className="border-[#F5E2DA] bg-[#DE896A] p-5 text-white shadow-sm shadow-[#DE896A]/20">
@@ -726,6 +923,7 @@ export default function Attendance() {
             PRESENT
           </p>
           <p className="mt-2 text-3xl font-bold">{counts.present}</p>
+          <p className="mt-1 text-xs font-semibold text-white/90">{presentPercentage}%</p>
         </Card>
 
         <Card className="border-[#F5E2DA] bg-white p-5 shadow-sm transition-all hover:border-[#DE896A]/40">
@@ -733,6 +931,7 @@ export default function Attendance() {
             ABSENT
           </p>
           <p className="mt-2 text-3xl font-bold text-[#3A2A22]">{counts.absent}</p>
+          <p className="mt-1 text-xs font-semibold text-[#8C7A70]">{absentPercentage}%</p>
         </Card>
 
         <Card className="border-[#F5E2DA] bg-white p-5 shadow-sm transition-all hover:border-[#DE896A]/40">
@@ -740,6 +939,7 @@ export default function Attendance() {
             LATE
           </p>
           <p className="mt-2 text-3xl font-bold text-[#3A2A22]">{counts.late}</p>
+          <p className="mt-1 text-xs font-semibold text-[#8C7A70]">{latePercentage}%</p>
         </Card>
       </div>
 
@@ -775,9 +975,21 @@ export default function Attendance() {
               </div>
             </div>
 
+            {/* Subtle banner when no class is scheduled on selected date */}
+            {!hasSessionForSelectedDate && (
+              <div className="flex items-center gap-2.5 border-b border-[#F5E2DA] bg-[#FFFBF9] px-5 py-3 text-xs text-[#8C7A70]">
+                <AlertCircle className="h-4 w-4 text-[#DE896A] shrink-0" />
+                <span className="font-medium">
+                  {isAllSelected
+                    ? "No class scheduled for this date across authorized batches."
+                    : `No class scheduled for this date for ${cleanDisplayString(selectedBatch?.batchName)}.`}
+                </span>
+              </div>
+            )}
+
             {/* Table Container without rigid fixed width */}
-            <div className="w-full overflow-x-auto">
-              <table className="w-full text-left text-sm">
+            <div className="w-full overflow-x-auto shadcn-scrollbar pb-1">
+              <table className="w-full min-w-[850px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-[#F5E2DA] bg-[#FFFBF9] text-[10px] font-bold uppercase tracking-wider text-[#B7A79D]">
                     <th className="px-5 py-3">Trainee</th>
@@ -834,58 +1046,75 @@ export default function Attendance() {
                           {row.courseName || "—"}
                         </td>
 
-                        {/* STATUS (Single shadcn Select Dropdown) */}
+                        {/* STATUS */}
                         <td className="px-5 py-3.5">
-                          {!isToday && !row.hasRecord ? (
-                            <Badge tone="neutral" className="text-xs">No Record</Badge>
+                          {!hasSessionForSelectedDate ? (
+                            <Badge tone="neutral" className="text-xs bg-[#F5EBE6] text-[#8C7A70] border-[#E8DCD5]">
+                              Not Recorded
+                            </Badge>
+                          ) : !isToday ? (
+                            row.hasRecord && row.status ? (
+                              <Badge
+                                tone={row.status === "P" ? "green" : row.status === "A" ? "red" : "amber"}
+                                className="text-xs"
+                              >
+                                {row.status === "P" ? "Present" : row.status === "A" ? "Absent" : "Late"}
+                              </Badge>
+                            ) : (
+                              <Badge tone="neutral" className="text-xs bg-[#F5EBE6] text-[#8C7A70] border-[#E8DCD5]">
+                                Not Recorded
+                              </Badge>
+                            )
                           ) : (
-                          <div className="flex items-center gap-2">
-                          <Select
-                            value={row.status}
-                            disabled={!isToday}
-                            onValueChange={(val: AttendanceStatus) =>
-                              setStatus(row.traineeId, val, row.batchId)
-                            }
-                          >
-                            <SelectTrigger
-                              className={cn(
-                                "h-9 w-28 rounded-xl border text-xs font-semibold transition-all",
-                                row.status === "P" &&
-                                  "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100/70",
-                                row.status === "A" &&
-                                  "border-red-200 bg-red-50 text-red-800 hover:bg-red-100/70",
-                                row.status === "L" &&
-                                  "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70",
-                                !isToday && "opacity-70 cursor-not-allowed"
+                            <div className="flex items-center gap-2">
+                              <Select
+                                value={row.status || ""}
+                                disabled={!isToday || !hasSessionForSelectedDate}
+                                onValueChange={(val: AttendanceStatus) =>
+                                  setStatus(row.traineeId, val, row.batchId)
+                                }
+                              >
+                                <SelectTrigger
+                                  className={cn(
+                                    "h-9 w-28 rounded-xl border text-xs font-semibold transition-all",
+                                    row.status === "P" &&
+                                      "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100/70",
+                                    row.status === "A" &&
+                                      "border-red-200 bg-red-50 text-red-800 hover:bg-red-100/70",
+                                    row.status === "L" &&
+                                      "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/70",
+                                    !row.status &&
+                                      "border-[#F0DED4] bg-white text-[#8C7A70] hover:border-[#DE896A]/50",
+                                    (!isToday || !hasSessionForSelectedDate) && "opacity-70 cursor-not-allowed"
+                                  )}
+                                >
+                                  <SelectValue placeholder="Mark status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="P">
+                                    <div className="flex items-center gap-2">
+                                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                      <span>Present</span>
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="A">
+                                    <div className="flex items-center gap-2">
+                                      <span className="h-2 w-2 rounded-full bg-red-500" />
+                                      <span>Absent</span>
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="L">
+                                    <div className="flex items-center gap-2">
+                                      <span className="h-2 w-2 rounded-full bg-amber-500" />
+                                      <span>Late</span>
+                                    </div>
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              {savingRowKey === `${row.traineeId}_${row.batchId || selectedBatchId}` && (
+                                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#DE896A]" />
                               )}
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="P">
-                                <div className="flex items-center gap-2">
-                                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                                  <span>Present</span>
-                                </div>
-                              </SelectItem>
-                              <SelectItem value="A">
-                                <div className="flex items-center gap-2">
-                                  <span className="h-2 w-2 rounded-full bg-red-500" />
-                                  <span>Absent</span>
-                                </div>
-                              </SelectItem>
-                              <SelectItem value="L">
-                                <div className="flex items-center gap-2">
-                                  <span className="h-2 w-2 rounded-full bg-amber-500" />
-                                  <span>Late</span>
-                                </div>
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                          {savingRowKey === `${row.traineeId}_${row.batchId || selectedBatchId}` && (
-                            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#DE896A]" />
-                          )}
-                          </div>
+                            </div>
                           )}
                         </td>
 
@@ -893,9 +1122,9 @@ export default function Attendance() {
                         <td className="px-5 py-3.5">
                           <Input
                             value={row.remark}
-                            disabled={!isToday}
+                            disabled={!isToday || !hasSessionForSelectedDate}
                             onChange={(e) => setRemark(row.traineeId, e.target.value, row.batchId)}
-                            placeholder={isToday ? "Add note..." : "—"}
+                            placeholder={isToday && hasSessionForSelectedDate ? "Add note..." : "—"}
                             className="h-9 w-full min-w-[140px] max-w-[200px] rounded-xl border-[#F0DED4] bg-white px-2.5 text-xs text-[#3A2A22] placeholder:text-[#C7B6AC] disabled:opacity-70 disabled:cursor-not-allowed"
                           />
                         </td>
@@ -961,6 +1190,10 @@ export default function Attendance() {
                 <div className="rounded-xl bg-white/20 px-3.5 py-3 text-xs font-medium text-white/95">
                   Select a specific batch to record or finalize register.
                 </div>
+              ) : !hasSessionForSelectedDate ? (
+                <div className="rounded-xl bg-white/20 px-3.5 py-3 text-xs font-medium text-white/95">
+                  No class scheduled for this date.
+                </div>
               ) : !isToday ? (
                 <div className="rounded-xl bg-white/20 px-3.5 py-3 text-xs font-medium text-white/95">
                   Viewing attendance for {selectedDateFormatted}. Switch to today to edit.
@@ -1005,19 +1238,25 @@ export default function Attendance() {
                   </div>
                   <div className="flex items-center justify-between py-1 border-b border-[#F5E2DA]/60">
                     <span className="font-semibold text-[#8C7A70]">Present Today</span>
-                    <span className="font-bold text-emerald-700">{counts.present}</span>
+                    <span className="font-bold text-emerald-700">
+                      {counts.present} <span className="text-[11px] font-normal text-emerald-600/80">({presentPercentage}%)</span>
+                    </span>
                   </div>
                   <div className="flex items-center justify-between py-1 border-b border-[#F5E2DA]/60">
                     <span className="font-semibold text-[#8C7A70]">Absent Today</span>
-                    <span className="font-bold text-red-700">{counts.absent}</span>
+                    <span className="font-bold text-red-700">
+                      {counts.absent} <span className="text-[11px] font-normal text-red-600/80">({absentPercentage}%)</span>
+                    </span>
                   </div>
                   <div className="flex items-center justify-between py-1 border-b border-[#F5E2DA]/60">
                     <span className="font-semibold text-[#8C7A70]">Late Today</span>
-                    <span className="font-bold text-amber-700">{counts.late}</span>
+                    <span className="font-bold text-amber-700">
+                      {counts.late} <span className="text-[11px] font-normal text-amber-600/80">({latePercentage}%)</span>
+                    </span>
                   </div>
                   <div className="flex items-center justify-between py-1">
                     <span className="font-semibold text-[#8C7A70]">Attendance Rate</span>
-                    <span className="font-bold text-[#DE896A]">{attendanceRate}%</span>
+                    <span className="font-bold text-[#DE896A]">{overallAttendanceRate}%</span>
                   </div>
                 </>
               ) : (
@@ -1034,15 +1273,21 @@ export default function Attendance() {
                   </div>
                   <div className="flex items-center justify-between py-1 border-b border-[#F5E2DA]/60">
                     <span className="font-semibold text-[#8C7A70]">Present</span>
-                    <span className="font-bold text-emerald-700">{counts.present}</span>
+                    <span className="font-bold text-emerald-700">
+                      {counts.present} <span className="text-[11px] font-normal text-emerald-600/80">({presentPercentage}%)</span>
+                    </span>
                   </div>
                   <div className="flex items-center justify-between py-1 border-b border-[#F5E2DA]/60">
                     <span className="font-semibold text-[#8C7A70]">Absent</span>
-                    <span className="font-bold text-red-700">{counts.absent}</span>
+                    <span className="font-bold text-red-700">
+                      {counts.absent} <span className="text-[11px] font-normal text-red-600/80">({absentPercentage}%)</span>
+                    </span>
                   </div>
                   <div className="flex items-center justify-between py-1 border-b border-[#F5E2DA]/60">
                     <span className="font-semibold text-[#8C7A70]">Late</span>
-                    <span className="font-bold text-amber-700">{counts.late}</span>
+                    <span className="font-bold text-amber-700">
+                      {counts.late} <span className="text-[11px] font-normal text-amber-600/80">({latePercentage}%)</span>
+                    </span>
                   </div>
                   {selectedBatch?.startDate && (
                     <div className="flex items-center justify-between py-1">

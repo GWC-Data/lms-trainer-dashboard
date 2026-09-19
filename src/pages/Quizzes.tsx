@@ -20,6 +20,7 @@ import { Badge } from "@/components/ui/Badge";
 import Input from "@/components/ui/Input";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Skeleton } from "@/components/ui/Skeleton";
+import PageLoader from "@/components/ui/PageLoader";
 import {
   Select,
   SelectContent,
@@ -345,6 +346,10 @@ export default function Quizzes() {
     selectedCourseId !== "all" ||
     selectedStatus !== "all" ||
     Boolean(searchQuery.trim());
+
+  if ((loading || loadingRef) && quizzes.length === 0) {
+    return <PageLoader text="Loading..." />;
+  }
 
   return (
     <div className="w-full min-w-0 max-w-full space-y-6">

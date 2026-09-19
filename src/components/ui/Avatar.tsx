@@ -48,3 +48,12 @@ export function Avatar({ initials, src, className }: { initials: string; src?: s
 export function avatarUrlFor(seed: string, size = 150): string {
   return `https://i.pravatar.cc/${size}?u=${encodeURIComponent(seed)}`;
 }
+
+export function getInitials(name?: string | null): string {
+  if (!name) return "TR";
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "TR";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+

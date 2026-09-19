@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
+import PageLoader from "./ui/PageLoader";
 
 interface LoadingSpinnerProps {
   timeout?: number;
+  text?: string;
 }
 
-const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ timeout }) => {
+const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ timeout, text = "Loading..." }) => {
   const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {
@@ -18,12 +20,8 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ timeout }) => {
 
   if (timedOut) return null;
 
-  return (
-    <div className="flex flex-col items-center justify-center space-y-3">
-      <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#DE896A]/20 border-t-[#DE896A]" />
-      <span className="text-sm font-medium text-gray-500">Loading schedule...</span>
-    </div>
-  );
+  return <PageLoader text={text} />;
 };
 
 export default LoadingSpinner;
+
