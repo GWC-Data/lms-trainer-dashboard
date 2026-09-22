@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
+import PageLoader from "@/components/ui/PageLoader";
 import { cn } from "@/lib/utils";
 
 function cleanDisplayString(str?: string | null): string {
@@ -36,17 +37,27 @@ const ALL = "all";
 
 export default function Trainees() {
   const location = useLocation();
-  const requestedBatchId = (location.state as { batchId?: string } | null)?.batchId;
+  const requestedState = location.state as {
+    batchId?: string;
+    traineeId?: string;
+    search?: string;
+    riskOnly?: boolean;
+  } | null;
+
+  const requestedBatchId = requestedState?.batchId;
+  const requestedTraineeId = requestedState?.traineeId;
+  const requestedSearch = requestedState?.search;
+  const requestedRiskOnly = requestedState?.riskOnly;
 
   const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
   const [batches, setBatches] = useState<BackendBatchItem[]>([]);
   const [loadingSelectors, setLoadingSelectors] = useState(true);
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(requestedSearch ?? "");
   const [courseFilter, setCourseFilter] = useState<string>(ALL);
   const [batchFilter, setBatchFilter] = useState<string>(requestedBatchId ?? ALL);
   const [modeFilter, setModeFilter] = useState<string>(ALL);
-  const [riskOnly, setRiskOnly] = useState(false);
+  const [riskOnly, setRiskOnly] = useState(requestedRiskOnly ?? false);
 
   const [trainees, setTrainees] = useState<TraineeListItem[]>([]);
   const [loadingTrainees, setLoadingTrainees] = useState(false);
@@ -163,6 +174,25 @@ export default function Trainees() {
       }
     }
   };
+
+  // Auto-expand trainee when navigated from notification or dashboard At-Risk card
+  useEffect(() => {
+    if (requestedTraineeId && trainees.length > 0 && !expandedId) {
+      const idx = trainees.findIndex(
+        (t) => (t.id || (t as any).traineeId) === requestedTraineeId
+      );
+      if (idx !== -1) {
+        const t = trainees[idx];
+        const tId = t.id || (t as any).traineeId || `tr-${idx}`;
+        const rowKey = `${tId}-${t.batchId || "nobatch"}-${idx}`;
+        handleToggleExpand(rowKey, tId);
+      }
+    }
+  }, [trainees, requestedTraineeId]);
+
+  if ((loadingSelectors || loadingTrainees) && trainees.length === 0) {
+    return <PageLoader text="Loading..." />;
+  }
 
   return (
     <div className="space-y-6">
@@ -292,8 +322,8 @@ export default function Trainees() {
             <tbody className="divide-y divide-[#F5E2DA]">
               {loadingTrainees ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-10 text-center text-sm text-[#B7A79D]">
-                    Loading trainees from BigQuery...
+                  <td colSpan={6} className="py-12">
+                    <PageLoader text="Loading..." className="min-h-[200px] py-6" />
                   </td>
                 </tr>
               ) : trainees.length === 0 ? (

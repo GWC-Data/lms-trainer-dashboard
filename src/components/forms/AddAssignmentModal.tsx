@@ -18,6 +18,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
+import { Calendar } from "@/components/ui/Calendar";
+import { Calendar as CalendarIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   getTrainerBatchesApi,
   getTrainerCoursesApi,
@@ -52,6 +56,14 @@ function cleanDisplayString(str?: string | null): string {
     .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
     .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
     .trim();
+}
+
+function getTodayDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function extractErrorMessage(err: any): string {
@@ -130,6 +142,19 @@ export default function AddAssignmentModal({
   const batchId = watch("batchId");
   const courseId = watch("courseId");
   const dueDate = watch("dueDate");
+  const todayStr = getTodayDateString();
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+
+  useEffect(() => {
+    register("dueDate", {
+      required: "Due date is required",
+      validate: (val) => {
+        if (!val) return "Due date is required";
+        if (val < todayStr) return "Due date cannot be in the past.";
+        return true;
+      },
+    });
+  }, [register, todayStr]);
 
   // Step 1: Load trainer's authorized batches and real courses when modal opens
   useEffect(() => {
@@ -236,6 +261,11 @@ export default function AddAssignmentModal({
       toast.error("Please select a due date.");
       return;
     }
+    if (values.dueDate < todayStr) {
+      setSubmitError("Due date cannot be in the past.");
+      toast.error("Due date cannot be in the past.");
+      return;
+    }
 
     try {
       setSubmitting(true);
@@ -328,13 +358,74 @@ export default function AddAssignmentModal({
             </p>
           </div>
 
-          {/* 4. Due Date */}
-          <Input
-            type="date"
-            label="Due date"
-            error={errors.dueDate?.message}
-            {...register("dueDate", { required: "Due date is required" })}
-          />
+          {/* 4. Due Date using shadcn Popover + Calendar */}
+          <div className="space-y-1 w-full">
+            <label className="text-xs font-medium text-[#6B5A52] block">
+              Due date <span className="text-red-500">*</span>
+            </label>
+            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "flex h-10 w-full items-center justify-between rounded-xl border border-[#F0DED4] bg-white px-3 py-2 text-xs font-medium text-[#233047] hover:border-[#DE896A]/50 focus:border-[#DE896A] focus:outline-none focus:ring-2 focus:ring-[#DE896A]/20 transition-all text-left cursor-pointer",
+                    !dueDate && "text-[#B7A79D]",
+                    errors.dueDate && "border-red-300 focus:border-red-400 focus:ring-red-200"
+                  )}
+                  aria-label="Select due date"
+                >
+                  <span>
+                    {dueDate ? (
+                      (() => {
+                        const [y, m, d] = dueDate.split("-");
+                        return `${d}-${m}-${y}`;
+                      })()
+                    ) : (
+                      "Select due date"
+                    )}
+                  </span>
+                  <CalendarIcon className="h-4 w-4 text-[#DE896A] shrink-0" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="z-[60] w-auto p-0 rounded-2xl border border-[#F0DED4] bg-white shadow-xl shadow-black/5"
+                align="start"
+              >
+                <Calendar
+                  mode="single"
+                  selected={
+                    dueDate
+                      ? (() => {
+                          const [y, m, d] = dueDate.split("-").map(Number);
+                          return new Date(y, m - 1, d);
+                        })()
+                      : undefined
+                  }
+                  onSelect={(d) => {
+                    if (d) {
+                      const y = d.getFullYear();
+                      const m = String(d.getMonth() + 1).padStart(2, "0");
+                      const day = String(d.getDate()).padStart(2, "0");
+                      setValue("dueDate", `${y}-${m}-${day}`, { shouldValidate: true });
+                      setDatePickerOpen(false);
+                    }
+                  }}
+                  disabled={(date) => {
+                    // Past dates must remain disabled. Today and future dates are selectable.
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const target = new Date(date);
+                    target.setHours(0, 0, 0, 0);
+                    return target < today;
+                  }}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+            {errors.dueDate && (
+              <p className="text-xs text-red-600">{errors.dueDate.message}</p>
+            )}
+          </div>
 
           <DialogFooter>
             <Button

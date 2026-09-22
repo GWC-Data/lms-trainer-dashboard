@@ -1,39 +1,49 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import faviconImg from '@/assets/favicon.png';
+import React from "react";
+import faviconImg from "@/assets/favicon.png";
+import { cn } from "@/lib/utils";
 
-interface PageLoaderProps {
+export interface PageLoaderProps {
   text?: string;
+  className?: string;
+  fullScreen?: boolean;
 }
 
-const PageLoader: React.FC<PageLoaderProps> = ({ text = 'Loading...' }) => {
+export const PageLoader: React.FC<PageLoaderProps> = ({
+  text = "Loading...",
+  className,
+  fullScreen = false,
+}) => {
   return (
-    <motion.div
-      key="page-loader"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
-      className="absolute inset-0 flex flex-col items-center justify-center bg-[#fdf1ee]/80 backdrop-blur-[2px] z-50"
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label={text || "Loading"}
+      className={cn(
+        "flex flex-col items-center justify-center w-full",
+        fullScreen
+          ? "fixed inset-0 z-50 bg-[#FFF8F6]/95 backdrop-blur-[2px]"
+          : "min-h-[60vh] sm:min-h-[70vh] py-16",
+        className
+      )}
     >
-      <div className="relative flex items-center justify-center">
-        {/* Outer Spinner */}
-        <div className="w-16 h-16 rounded-full border-4 border-orange-500/20 border-t-orange-500 animate-spin" />
-
-        {/* Centered Pulsing Logo */}
+      <div className="flex items-center justify-center">
+        {/* Large bouncing TeqCertify brand icon */}
         <img
           src={faviconImg}
-          alt="Loading"
-          className="absolute w-8 h-8 object-contain animate-pulse"
+          alt="TeqCertify"
+          className="h-20 w-20 sm:h-24 sm:w-24 object-contain animate-bounce select-none drop-shadow-sm"
         />
       </div>
+
       {text && (
-        <p className="text-[10px] font-bold text-orange-500/70 uppercase tracking-widest mt-4">
+        <p className="mt-4 text-xs sm:text-sm font-medium text-[#8C7A70] tracking-normal select-none">
           {text}
         </p>
       )}
-    </motion.div>
+      <span className="sr-only">{text || "Loading..."}</span>
+    </div>
   );
 };
 
 export default PageLoader;
+

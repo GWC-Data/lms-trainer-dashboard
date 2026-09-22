@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
+import PageLoader from "@/components/ui/PageLoader";
 
 function cleanDisplayString(str?: string | null): string {
   if (!str) return "";
@@ -167,6 +168,10 @@ export default function Reports() {
 
   const hasAttendance = attendanceData.some((d) => d.value > 0);
 
+  if (loadingSelectors && batches.length === 0) {
+    return <PageLoader text="Loading..." />;
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -208,10 +213,12 @@ export default function Reports() {
         </div>
       </div>
 
-      {loadingSelectors || loadingTrainees ? (
-        <Card>
-          <CardContent className="py-12 text-center text-sm text-[#B7A79D]">
-            Loading report data from BigQuery...
+      {loadingSelectors && batches.length === 0 ? (
+        <PageLoader text="Loading..." />
+      ) : loadingTrainees ? (
+        <Card className="border-[#F5E2DA]">
+          <CardContent className="py-12">
+            <PageLoader text="Loading..." className="min-h-[240px] py-6" />
           </CardContent>
         </Card>
       ) : (

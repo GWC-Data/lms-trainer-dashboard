@@ -34,7 +34,7 @@ import { fetchUsersbyIdApi } from "@/helpers/api/userApi";
 import { getAttendanceByUserIdApi } from "@/helpers/api/attendanceApi";
 import { getTrainerBatchesApi } from "@/services/api";
 import NoBatchEnrollment from "../SideBar/noBatchEnrollment";
-import LoadingSpinner from "@/components/loadingSpinner";
+import PageLoader from "@/components/ui/PageLoader";
 import {
   fetchBatchEventsForTraineeApi,
   createBatchEventApi,
@@ -775,7 +775,7 @@ const Calendar: React.FC = () => {
   };
 
   if (isLoading) {
-    return <LoadingSpinner />;
+    return <PageLoader text="Loading..." />;
   }
 
   if (!batchId && batchFilters.length === 0) {

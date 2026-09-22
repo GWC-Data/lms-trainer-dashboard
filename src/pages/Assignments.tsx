@@ -18,10 +18,13 @@ import {
   FileText,
   Check,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
+import PageLoader from "@/components/ui/PageLoader";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Input } from "@/components/ui/Input";
@@ -91,6 +94,10 @@ export default function Assignments() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBatchId, setSelectedBatchId] = useState<string>("ALL");
   const [selectedCourseId, setSelectedCourseId] = useState<string>("ALL");
+
+  // Assignment cards pagination
+  const CARDS_PER_PAGE = 6;
+  const [cardPage, setCardPage] = useState(0);
 
   // Active assignment & submissions
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | null>(null);
@@ -184,6 +191,7 @@ export default function Assignments() {
   const handleBatchChange = (newBatchId: string) => {
     setSelectedBatchId(newBatchId);
     setActiveSubmissionId(null);
+    setCardPage(0);
 
     if (newBatchId === "ALL") {
       // Keep course as ALL or current
@@ -202,6 +210,7 @@ export default function Assignments() {
   const handleCourseChange = (newCourseId: string) => {
     setSelectedCourseId(newCourseId);
     setActiveSubmissionId(null);
+    setCardPage(0);
 
     // If a batch is selected and doesn't belong to this course, reset batch
     if (selectedBatchId !== "ALL" && batchResolvedCourseId && batchResolvedCourseId !== newCourseId) {
@@ -215,6 +224,7 @@ export default function Assignments() {
     setSelectedBatchId("ALL");
     setSelectedCourseId("ALL");
     setActiveSubmissionId(null);
+    setCardPage(0);
   };
 
   const isFiltered = searchQuery.trim() !== "" || selectedBatchId !== "ALL" || selectedCourseId !== "ALL";
@@ -252,6 +262,18 @@ export default function Assignments() {
       return true;
     });
   }, [assignments, selectedBatchId, selectedCourseId, searchQuery, batchHasNoCourse]);
+
+  // Reset card page when filteredAssignments changes
+  useEffect(() => {
+    setCardPage(0);
+  }, [searchQuery]);
+
+  // Paginated assignments for the card grid
+  const totalCardPages = Math.max(1, Math.ceil(filteredAssignments.length / CARDS_PER_PAGE));
+  const paginatedAssignments = useMemo(() => {
+    const start = cardPage * CARDS_PER_PAGE;
+    return filteredAssignments.slice(start, start + CARDS_PER_PAGE);
+  }, [filteredAssignments, cardPage, CARDS_PER_PAGE]);
 
   // Keep active assignment in sync with filtered assignments
   useEffect(() => {
@@ -389,6 +411,10 @@ export default function Assignments() {
     const evaluated = Math.max(0, submitted - pending);
     return { total, submitted, pending, evaluated };
   }, [activeAssignment]);
+
+  if (loading && assignments.length === 0) {
+    return <PageLoader text="Loading..." />;
+  }
 
   return (
     <div className="space-y-6 w-full max-w-full min-w-0">
@@ -575,7 +601,7 @@ export default function Assignments() {
           {/* 3. RESPONSIVE ASSIGNMENT CARDS GRID (No horizontal scrolling!)        */}
           {/* ───────────────────────────────────────────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 w-full min-w-0">
-            {filteredAssignments.map((a) => {
+            {paginatedAssignments.map((a) => {
               const isSelected = a.id === activeAssignmentId;
               const pendingCount = a.pendingReview ?? 0;
               const subCount = a.submissions ?? a.submissionCount ?? 0;
@@ -586,7 +612,7 @@ export default function Assignments() {
                   key={a.id}
                   onClick={() => handleSelectAssignment(a.id)}
                   className={cn(
-                    "cursor-pointer transition-all duration-200 hover:shadow-md hover:border-[#DE896A]/60 flex flex-col justify-between overflow-hidden",
+                    "cursor-pointer transition-all duration-200 hover:shadow-md hover:border-[#DE896A]/60 hover:-translate-y-0.5 flex flex-col justify-between overflow-hidden group",
                     isSelected
                       ? "border-[#DE896A] bg-[#FFFBF9] ring-2 ring-[#DE896A]/20"
                       : "border-[#F5E2DA] bg-white hover:bg-[#FFFCFB]"
@@ -603,7 +629,7 @@ export default function Assignments() {
                         >
                           <PencilLine className="h-4 w-4" />
                         </div>
-                        <h3 className="font-semibold text-sm text-[#3A2A22] truncate tracking-tight">
+                        <h3 className="font-semibold text-sm text-[#3A2A22] truncate tracking-tight" title={cleanDisplayString(a.title)}>
                           {cleanDisplayString(a.title)}
                         </h3>
                       </div>
@@ -627,11 +653,11 @@ export default function Assignments() {
                     <div className="mt-3 space-y-1.5 text-xs text-[#6B5A52]">
                       <div className="flex items-center gap-1.5 truncate">
                         <GraduationCap className="h-3.5 w-3.5 shrink-0 text-[#8C7A70]" />
-                        <span className="truncate">{cleanDisplayString(a.courseName) || "Allocated Course"}</span>
+                        <span className="truncate" title={cleanDisplayString(a.courseName)}>{cleanDisplayString(a.courseName) || "Allocated Course"}</span>
                       </div>
                       <div className="flex items-center gap-1.5 truncate">
                         <Users className="h-3.5 w-3.5 shrink-0 text-[#8C7A70]" />
-                        <span className="truncate">{cleanDisplayString(a.batchName) || "Allocated Batch"}</span>
+                        <span className="truncate" title={cleanDisplayString(a.batchName)}>{cleanDisplayString(a.batchName) || "Allocated Batch"}</span>
                       </div>
                     </div>
                   </CardHeader>
@@ -654,8 +680,8 @@ export default function Assignments() {
                           <Check className="h-3.5 w-3.5" /> Selected
                         </span>
                       ) : (
-                        <span className="text-xs text-[#8C7A70] hover:text-[#DE896A] inline-flex items-center gap-1">
-                          Review Submissions <ArrowRight className="h-3 w-3" />
+                        <span className="text-xs text-[#8C7A70] group-hover:text-[#DE896A] inline-flex items-center gap-1 transition-colors">
+                          Review Submissions <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
                         </span>
                       )}
                     </div>
@@ -664,6 +690,33 @@ export default function Assignments() {
               );
             })}
           </div>
+
+          {/* Pagination Controls */}
+          {totalCardPages > 1 && (
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCardPage((p) => Math.max(0, p - 1))}
+                disabled={cardPage === 0}
+                className="h-8 px-3 text-xs rounded-lg"
+              >
+                <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Previous
+              </Button>
+              <span className="text-xs font-medium text-[#6B5A52]">
+                Page {cardPage + 1} of {totalCardPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCardPage((p) => Math.min(totalCardPages - 1, p + 1))}
+                disabled={cardPage >= totalCardPages - 1}
+                className="h-8 px-3 text-xs rounded-lg"
+              >
+                Next <ChevronRight className="h-3.5 w-3.5 ml-1" />
+              </Button>
+            </div>
+          )}
 
           {/* ───────────────────────────────────────────────────────────────────── */}
           {/* 4. SELECTED ASSIGNMENT DETAIL & REVIEW SECTION                         */}

@@ -1156,13 +1156,16 @@ export async function markAttendanceApi(payload: MarkAttendancePayload): Promise
   return response.data;
 }
 
-export async function getAttendanceByBatchApi(batchId?: string, courseId?: string): Promise<any> {
-  const params: Record<string, string> = {};
+export async function getAttendanceByBatchApi(batchId?: string, courseId?: string, date?: string): Promise<any> {
+  const params: Record<string, string> = { limit: "1000" };
   if (batchId && batchId !== "all") {
     params.batchId = batchId;
   }
-  if (courseId && courseId !== "all") {
+  if (courseId && courseId !== "all" && courseId !== "none") {
     params.courseId = courseId;
+  }
+  if (date && date !== "all") {
+    params.attendanceDate = date;
   }
   const response = await api.get<any>("/attendance", { params });
   return response.data;
