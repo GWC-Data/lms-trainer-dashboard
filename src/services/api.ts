@@ -150,10 +150,16 @@ export interface LoginAlreadyVerifiedTodayResponse {
   success: boolean;
   requiresOtp: false;
   message: string;
-  accessToken: string;
-  refreshToken: string;
-  tokenExpiry: number;
-  user: BackendUser;
+  login?: {
+    accessToken: string;
+    refreshToken: string;
+    tokenExpiry: number;
+    user: BackendUser;
+  };
+  accessToken?: string;
+  refreshToken?: string;
+  tokenExpiry?: number;
+  user?: BackendUser;
 }
 
 export type LoginResponse = LoginOtpRequiredResponse | LoginAlreadyVerifiedTodayResponse;
@@ -161,10 +167,16 @@ export type LoginResponse = LoginOtpRequiredResponse | LoginAlreadyVerifiedToday
 export interface VerifyOtpResponse {
   success: boolean;
   message: string;
-  accessToken: string;
-  refreshToken: string;
-  tokenExpiry: number;
-  user: BackendUser;
+  login?: {
+    accessToken: string;
+    refreshToken: string;
+    tokenExpiry: number;
+    user: BackendUser;
+  };
+  accessToken?: string;
+  refreshToken?: string;
+  tokenExpiry?: number;
+  user?: BackendUser;
 }
 
 export interface ResendOtpResponse {

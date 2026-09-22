@@ -207,7 +207,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!response.requiresOtp) {
         // This device already verified OTP today — tokens already issued,
         // no OTP screen needed.
-        return storeAuthenticatedSession(response);
+        const authPayload = response.login || response;
+        if (!authPayload.accessToken || !authPayload.user) {
+          return { success: false, error: "Invalid response from server." };
+        }
+        return storeAuthenticatedSession({
+          accessToken: authPayload.accessToken,
+          refreshToken: authPayload.refreshToken || "",
+          user: authPayload.user,
+        });
       }
 
       return {
@@ -226,7 +234,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       const response = await verifyOtpApi(verificationId, otp);
-      return storeAuthenticatedSession(response);
+      const authPayload = response.login || response;
+      if (!authPayload.accessToken || !authPayload.user) {
+        return { success: false, error: "Invalid response from server." };
+      }
+      return storeAuthenticatedSession({
+        accessToken: authPayload.accessToken,
+        refreshToken: authPayload.refreshToken || "",
+        user: authPayload.user,
+      });
     } catch (err: unknown) {
       return { success: false, error: mapAuthError(err, "Invalid OTP. Please try again.") };
     } finally {
