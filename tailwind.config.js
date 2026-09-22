@@ -6,8 +6,10 @@ module.exports = {
   theme: {
   	extend: {
 		fontFamily: {
-			poppins: ["Poppins", "ans-serif"],
-		  },
+			sans: ["Inter", "Poppins", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
+			poppins: ["Poppins", "sans-serif"],
+			grotesk: ["Space Grotesk", "sans-serif"],
+		},
   		borderRadius: {
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',

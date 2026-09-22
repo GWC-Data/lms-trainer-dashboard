@@ -23,6 +23,10 @@ export const PageLoader: React.FC<PageLoaderProps> = ({
   size = "lg",
   fullScreen = false,
 }) => {
+  const isCustomHeight = Boolean(
+    className && (className.includes("min-h-") || className.includes("h-"))
+  );
+
   return (
     <div
       role="status"
@@ -32,18 +36,20 @@ export const PageLoader: React.FC<PageLoaderProps> = ({
         "flex flex-col items-center justify-center w-full",
         fullScreen
           ? "fixed inset-0 z-50 bg-[#FFF8F6]/95 backdrop-blur-[2px]"
-          : "min-h-[50vh] sm:min-h-[60vh] py-12",
+          : isCustomHeight
+          ? ""
+          : "min-h-full h-full flex-1",
         className
       )}
     >
-      <div className="flex items-center justify-center">
-        {/* Big smoothly rotating TeqCertify brand icon */}
+      <div className="flex items-center justify-center animate-teqcertify-glow">
+        {/* Smoothly rotating TeqCertify brand icon with soft pulsing glow */}
         <img
           src={faviconImg}
           alt="Loading"
           className={cn(
-            sizeClasses[size] || sizeClasses.lg,
-            "object-contain animate-spin-slow select-none pointer-events-none drop-shadow-sm",
+            sizeClasses[size] || sizeClasses.md,
+            "object-contain animate-spin-slow select-none pointer-events-none",
             imageClassName
           )}
         />

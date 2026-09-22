@@ -14,6 +14,7 @@ import {
   UserCheck,
   Users,
   BarChart3,
+  Settings,
   LogOut,
   Layers,
   Calendar as CalendarIcon,
@@ -77,6 +78,12 @@ const sections: NavSection[] = [
       { to: "/reports", label: "Reports", icon: BarChart3 },
     ],
   },
+  {
+    label: "Account",
+    items: [
+      { to: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 interface SidebarProps {
@@ -104,8 +111,8 @@ export default function Sidebar({
     ? ((user.firstName?.[0] || "") + (user.lastName?.[0] || "")).toUpperCase() || "TR"
     : "TR";
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     navigate("/login", { replace: true });
   }
 
@@ -122,35 +129,36 @@ export default function Sidebar({
 
       <aside
         className={cn(
-          "flex h-full shrink-0 flex-col border-r border-[#F5E2DA] bg-white transition-all duration-300 z-50",
-          "fixed inset-y-0 left-0 md:static",
-          isMobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full md:translate-x-0",
-          isCollapsed ? "md:w-20" : "w-60 md:w-56"
+          "h-full shrink-0 flex-col border-r border-[#F0DED4] bg-white transition-all duration-300 z-50",
+          isMobileOpen
+            ? "fixed inset-y-0 left-0 flex w-64 max-w-[80vw] shadow-2xl translate-x-0"
+            : "hidden md:flex md:static md:translate-x-0",
+          isCollapsed ? "md:w-16" : "md:w-52 lg:w-54"
         )}
       >
-        <div className={cn("flex h-16 shrink-0 items-center justify-between", isCollapsed ? "md:justify-center px-4 md:px-0" : "px-5")}>
-          <div className="flex items-center">
+        <div className={cn("flex h-13 sm:h-14 shrink-0 items-center justify-between border-b border-[#F5E2DA]/80", isCollapsed ? "md:justify-center px-3 md:px-0" : "px-4")}>
+          <div className="flex items-center gap-2">
             {isCollapsed ? (
-              <img src={favicon} alt="TeqCertify" className="h-8 w-8 object-contain" />
+              <img src={favicon} alt="TeqCertify" className="h-7 w-7 object-contain drop-shadow-xs" />
             ) : (
-              <img src={logo} alt="TeqCertify" className="h-7 w-auto object-contain" />
+              <img src={logo} alt="TeqCertify" className="h-6.5 w-auto object-contain drop-shadow-xs" />
             )}
           </div>
           {/* Close button on mobile drawer */}
           <button
             onClick={onCloseMobile}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#B7A79D] hover:bg-[#FBECE7] hover:text-[#DE896A] md:hidden"
+            className="flex h-7.5 w-7.5 items-center justify-center rounded-lg text-[#B7A79D] hover:bg-[#FBECE7] hover:text-[#DE896A] md:hidden"
             aria-label="Close sidebar"
           >
             ✕
           </button>
         </div>
 
-        <nav className="sidebar-nav-scroll flex-1 overflow-y-auto overflow-x-hidden pl-3 pr-1.5 pb-4 pt-4">
+        <nav className="sidebar-nav-scroll flex-1 overflow-y-auto overflow-x-hidden px-2.5 pb-3 pt-2.5 space-y-0.5">
           {sections.map((section, idx) => (
-            <div key={idx} className={cn(idx > 0 && (isCollapsed ? "mt-2" : "mt-4"))}>
+            <div key={idx} className={cn(idx > 0 && (isCollapsed ? "mt-1.5" : "mt-2.5"))}>
               {section.label && !isCollapsed && (
-                <p className="px-4 pb-2 text-[9px] font-bold uppercase tracking-wider text-[#B7A79D]">
+                <p className="px-3 pb-1 pt-0.5 text-[9px] font-bold uppercase tracking-wider text-[#A49288]">
                   {section.label}
                 </p>
               )}
@@ -163,18 +171,18 @@ export default function Sidebar({
                       onClick={onCloseMobile}
                       className={({ isActive }) =>
                         cn(
-                          "flex items-center rounded-xl transition-colors",
-                          isCollapsed ? "md:justify-center p-2.5 md:p-2" : "gap-3 px-4 py-2.5",
+                          "group flex items-center rounded-xl transition-all duration-150",
+                          isCollapsed ? "md:justify-center p-2" : "gap-2.5 px-3 py-1.5",
                           isActive
-                            ? "bg-[#DE896A] text-white shadow-sm shadow-[#DE896A]/30"
-                            : "text-[#6B5A52] hover:bg-[#FBECE7] hover:text-[#8A442E]"
+                            ? "bg-gradient-to-r from-[#DE896A] to-[#E59779] text-white font-semibold shadow-xs shadow-[#DE896A]/20"
+                            : "text-[#5C4A40] hover:bg-[#FDF3EE] hover:text-[#DE896A] font-medium"
                         )
                       }
                       title={isCollapsed ? item.label : undefined}
                     >
-                      <item.icon className="h-5 w-5 shrink-0" />
+                      <item.icon className="h-4 w-4 shrink-0 group-hover:scale-105 transition-transform" />
                       {(!isCollapsed || isMobileOpen) && (
-                        <span className="text-[13px] font-medium">{item.label}</span>
+                        <span className="text-[12.5px] tracking-tight">{item.label}</span>
                       )}
                     </NavLink>
                   </li>
@@ -184,24 +192,34 @@ export default function Sidebar({
           ))}
         </nav>
 
-      <div className={cn("flex border-t border-[#F5E2DA] py-4 shrink-0", isCollapsed ? "flex-col items-center gap-4 px-2" : "items-center gap-3 px-4")}>
-        <Avatar src={TRAINER_PHOTO} initials={trainerInitials} />
-        {!isCollapsed && (
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-[#3A2A22]">{trainerName}</p>
-            <p className="truncate text-xs text-[#B7A79D]">{trainerRole}</p>
+        <div className={cn("p-2.5 shrink-0 border-t border-[#F5E2DA]", isCollapsed ? "px-1.5" : "px-2.5")}>
+          <div
+            className={cn(
+              "flex items-center rounded-xl border border-[#F5E2DA] bg-[#FFFBF9] p-2 transition-all shadow-xs",
+              isCollapsed ? "flex-col gap-2 justify-center py-2" : "gap-2.5"
+            )}
+          >
+            <div className="relative shrink-0">
+              <Avatar src={TRAINER_PHOTO} initials={trainerInitials} className="h-8 w-8" />
+              <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white" />
+            </div>
+            {!isCollapsed && (
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-bold text-[#3A2A22]">{trainerName}</p>
+                <p className="truncate text-[10.5px] font-medium text-[#8C7A70]">{trainerRole}</p>
+              </div>
+            )}
+            <button
+              onClick={() => setShowLogoutConfirm(true)}
+              title="Log out"
+              aria-label="Log out"
+              className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-lg text-[#B7A79D] hover:bg-[#FBECE7] hover:text-[#DE896A] transition-colors cursor-pointer"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
           </div>
-        )}
-        <button
-          onClick={() => setShowLogoutConfirm(true)}
-          title="Log out"
-          aria-label="Log out"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#B7A79D] hover:bg-[#FBECE7] hover:text-[#DE896A] transition-colors cursor-pointer"
-        >
-          <LogOut className="h-4 w-4" />
-        </button>
-      </div>
-    </aside>
+        </div>
+      </aside>
 
     {/* Logout Confirmation Dialog */}
     <Dialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>

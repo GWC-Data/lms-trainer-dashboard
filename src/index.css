@@ -74,7 +74,7 @@
     font-size: 16px;
   }
   body {
-    @apply text-foreground font-poppins antialiased;
+    @apply text-foreground font-sans antialiased;
     background-color: #fff8f6;
   }
 }
@@ -157,14 +157,32 @@
 }
 
 
-/* Soft ambient wash behind the dashboard content — two low-opacity color
-   blobs over the base cream, instead of one flat fill. */
+/* Soft ambient wash behind the dashboard content with subtle dot-grid details */
 .app-canvas-bg {
   background-color: #fff8f6;
-  background-image: radial-gradient(640px circle at 88% -8%, rgba(222, 137, 106, 0.12), transparent 60%),
-    radial-gradient(520px circle at -6% 22%, rgba(94, 148, 214, 0.07), transparent 55%),
-    radial-gradient(480px circle at 60% 115%, rgba(123, 173, 148, 0.06), transparent 55%);
+  background-image:
+    radial-gradient(rgba(222, 137, 106, 0.08) 1.25px, transparent 1.25px),
+    radial-gradient(680px circle at 92% -6%, rgba(222, 137, 106, 0.13), transparent 60%),
+    radial-gradient(550px circle at -6% 18%, rgba(147, 112, 219, 0.06), transparent 55%),
+    radial-gradient(500px circle at 60% 115%, rgba(94, 148, 214, 0.06), transparent 55%);
+  background-size: 24px 24px, 100% 100%, 100% 100%, 100% 100%;
   background-attachment: fixed;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(245, 226, 218, 0.85);
+}
+
+.bento-card {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s ease;
+}
+
+.bento-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -6px rgba(222, 137, 106, 0.12), 0 6px 14px -4px rgba(0, 0, 0, 0.03);
 }
 
 /* Smooth continuous TeqCertify brand loader animations */
@@ -196,4 +214,18 @@
 
 .animate-pulse-ring {
   animation: teqcertify-pulse-ring 3s ease-in-out infinite;
+}
+
+@keyframes teqcertify-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(222, 137, 106, 0.25));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(222, 137, 106, 0.55));
+  }
+}
+
+.animate-teqcertify-glow {
+  animation: teqcertify-glow 1.8s ease-in-out infinite;
+  will-change: filter;
 }

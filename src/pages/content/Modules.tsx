@@ -284,7 +284,11 @@ export default function Modules() {
       : "Browse modules for your assigned curriculum and manage teaching materials.");
 
   if ((loading || loadingRef) && modules.length === 0) {
-    return <PageLoader />;
+    return (
+      <div className="flex min-h-full flex-1 items-center justify-center">
+        <PageLoader />
+      </div>
+    );
   }
 
   return (
