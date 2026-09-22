@@ -333,7 +333,7 @@ export default function Documents() {
   const contextBatchName = cleanDisplayString(selectedBatch?.batchName || documents[0]?.batchName);
 
   if ((loading || loadingRef) && documents.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (
@@ -545,7 +545,7 @@ export default function Documents() {
               {loading ? (
                 <tr>
                   <td colSpan={8} className="py-12">
-                    <PageLoader text="Loading..." className="min-h-[200px] py-6" />
+                    <PageLoader className="min-h-[180px] py-6" />
                   </td>
                 </tr>
               ) : selectedCourseId === "none" ? (

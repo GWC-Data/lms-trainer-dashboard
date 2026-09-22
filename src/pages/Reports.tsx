@@ -169,7 +169,7 @@ export default function Reports() {
   const hasAttendance = attendanceData.some((d) => d.value > 0);
 
   if (loadingSelectors && batches.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (
@@ -214,11 +214,11 @@ export default function Reports() {
       </div>
 
       {loadingSelectors && batches.length === 0 ? (
-        <PageLoader text="Loading..." />
+        <PageLoader />
       ) : loadingTrainees ? (
         <Card className="border-[#F5E2DA]">
           <CardContent className="py-12">
-            <PageLoader text="Loading..." className="min-h-[240px] py-6" />
+            <PageLoader className="min-h-[200px] py-6" />
           </CardContent>
         </Card>
       ) : (

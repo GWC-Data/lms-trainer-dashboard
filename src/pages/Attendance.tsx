@@ -707,7 +707,7 @@ export default function Attendance() {
   // 8. Skeleton Loading UI
   // ─────────────────────────────────────────────────────────────────────────────
   if (loadingInitial) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (
@@ -1003,8 +1003,8 @@ export default function Attendance() {
                 <tbody className="divide-y divide-[#F5E2DA]">
                   {loadingRoster ? (
                     <tr>
-                      <td colSpan={6} className="px-5 py-12 text-center text-sm text-[#B7A79D]">
-                        Loading attendance register...
+                      <td colSpan={6} className="py-12">
+                        <PageLoader className="min-h-[180px] py-6" />
                       </td>
                     </tr>
                   ) : pageRows.length === 0 ? (

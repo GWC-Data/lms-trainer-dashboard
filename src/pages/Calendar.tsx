@@ -775,7 +775,7 @@ const Calendar: React.FC = () => {
   };
 
   if (isLoading) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   if (!batchId && batchFilters.length === 0) {

@@ -348,7 +348,7 @@ export default function Quizzes() {
     Boolean(searchQuery.trim());
 
   if ((loading || loadingRef) && quizzes.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (

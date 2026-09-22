@@ -216,7 +216,7 @@ export default function MyCourses() {
   };
 
   if (loading && courses.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (

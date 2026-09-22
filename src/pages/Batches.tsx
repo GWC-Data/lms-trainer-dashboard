@@ -143,7 +143,7 @@ export default function Batches() {
   };
 
   if (loading && batches.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (

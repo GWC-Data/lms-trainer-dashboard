@@ -6,7 +6,7 @@ interface LoadingSpinnerProps {
   text?: string;
 }
 
-const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ timeout, text = "Loading..." }) => {
+const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ timeout }) => {
   const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {
@@ -20,7 +20,7 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({ timeout, text = "Loadin
 
   if (timedOut) return null;
 
-  return <PageLoader text={text} />;
+  return <PageLoader />;
 };
 
 export default LoadingSpinner;

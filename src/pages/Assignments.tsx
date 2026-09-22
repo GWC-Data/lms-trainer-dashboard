@@ -413,7 +413,7 @@ export default function Assignments() {
   }, [activeAssignment]);
 
   if (loading && assignments.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (
@@ -780,9 +780,7 @@ export default function Assignments() {
                   </CardHeader>
                   <CardContent className="divide-y divide-[#F5E2DA] p-0">
                     {loadingSubmissions ? (
-                      <div className="flex items-center justify-center p-8 text-xs text-[#8C7A70]">
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#DE896A]" /> Loading submissions...
-                      </div>
+                      <PageLoader className="min-h-[160px] py-6" />
                     ) : submissions.length === 0 ? (
                       <div className="p-8 text-center text-xs text-[#B7A79D]">
                         No submissions received yet for this assignment.

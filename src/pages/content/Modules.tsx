@@ -284,7 +284,7 @@ export default function Modules() {
       : "Browse modules for your assigned curriculum and manage teaching materials.");
 
   if ((loading || loadingRef) && modules.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (
