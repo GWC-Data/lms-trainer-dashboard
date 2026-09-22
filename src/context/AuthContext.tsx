@@ -1,8 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   loginApi,
+  verifyOtpApi,
+  resendOtpApi,
+  logoutApi,
+  refreshTokenApi,
   TOKEN_STORAGE_KEY,
+  REFRESH_TOKEN_STORAGE_KEY,
   USER_STORAGE_KEY,
   type BackendUser,
 } from "@/services/api";
@@ -10,19 +15,27 @@ import { AxiosError } from "axios";
 
 export interface User extends BackendUser {}
 
+export interface LoginResult {
+  success: boolean;
+  error?: string;
+  requiresOtp?: boolean;
+  verificationId?: string;
+}
+
 interface AuthContextValue {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  logout: () => void;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  verifyOtp: (verificationId: string, otp: string) => Promise<{ success: boolean; error?: string }>;
+  resendOtp: (verificationId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function isTokenExpired(token: string | null): boolean {
-  if (!token) return true;
+function decodeTokenPayload(token: string): { exp?: number } | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return true;
@@ -48,9 +61,27 @@ function isTokenExpired(token: string | null): boolean {
     }
     return false;
   } catch {
-    return true;
+    return null;
   }
 }
+
+function isTokenExpired(token: string | null): boolean {
+  if (!token) return true;
+  const payload = decodeTokenPayload(token);
+  if (!payload?.exp) return true;
+  return Date.now() >= payload.exp * 1000;
+}
+
+// Milliseconds until the token's exp claim, or null if it can't be read.
+function getMsUntilExpiry(token: string): number | null {
+  const payload = decodeTokenPayload(token);
+  if (!payload?.exp) return null;
+  return payload.exp * 1000 - Date.now();
+}
+
+// Refresh this far ahead of actual expiry so an active user's request never
+// races a just-expired access token.
+const REFRESH_BEFORE_EXPIRY_MS = 2 * 60 * 1000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => {
@@ -77,82 +108,138 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Periodically check token validity
-  useEffect(() => {
-    if (!token) return;
-    const checkExpiry = () => {
-      if (isTokenExpired(token)) {
-        logout();
-      }
-    };
-    const interval = setInterval(checkExpiry, 60000);
-    return () => clearInterval(interval);
-  }, [token]);
-
-  const logout = () => {
+  const logout = async () => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+    // Best-effort: a failed logout call must never trap the user in a
+    // logged-in-looking state client-side — storage is cleared regardless.
+    try {
+      await logoutApi();
+    } catch {
+      // ignore
+    }
     localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
     localStorage.removeItem(USER_STORAGE_KEY);
     setToken(null);
     setUser(null);
   };
 
-  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+  // Proactively refreshes the access token shortly before it expires, so an
+  // active user is never interrupted by a hard timeout. Falls back to
+  // logout only if the refresh itself fails (revoked/expired session).
+  useEffect(() => {
+    if (!token) return;
+
+    const msUntilExpiry = getMsUntilExpiry(token);
+    if (msUntilExpiry === null) return;
+
+    const delay = Math.max(msUntilExpiry - REFRESH_BEFORE_EXPIRY_MS, 1000);
+    refreshTimerRef.current = setTimeout(async () => {
+      const newAccessToken = await refreshTokenApi();
+      if (newAccessToken) {
+        localStorage.setItem(TOKEN_STORAGE_KEY, newAccessToken);
+        setToken(newAccessToken);
+      } else {
+        logout();
+      }
+    }, delay);
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  // The backend already returns a user-facing `message` for every login/OTP
+  // failure branch (invalid creds, account not activated, rate-limited,
+  // invalid/expired/max-attempts OTP, device limit, resend cooldown, ...) —
+  // so this just surfaces that message, with a network/fallback case.
+  function mapAuthError(err: unknown, fallbackMessage: string): string {
+    if (err instanceof AxiosError) {
+      const data = err.response?.data as { message?: string; error?: string } | undefined;
+      if (data?.message) return data.message;
+      if (data?.error) return data.error;
+      if (err.code === "ERR_NETWORK") {
+        return "Unable to connect to LMS backend server. Please check your connection.";
+      }
+    }
+    return fallbackMessage;
+  }
+
+  // Shared by the "already verified today" branch of login() and
+  // verifyOtp() — both receive the same { accessToken, refreshToken, user }
+  // shape once tokens actually exist, they just get there via different requests.
+  function storeAuthenticatedSession(auth: {
+    accessToken: string;
+    refreshToken: string;
+    user: BackendUser;
+  }): { success: boolean; error?: string } {
+    const roleName = auth.user.role?.toUpperCase() || "";
+    if (roleName !== "TRAINER") {
+      return {
+        success: false,
+        error: "Access denied. Only trainer accounts can access this dashboard.",
+      };
+    }
+
+    localStorage.setItem(TOKEN_STORAGE_KEY, auth.accessToken);
+    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, auth.refreshToken);
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(auth.user));
+
+    setToken(auth.accessToken);
+    setUser(auth.user);
+    return { success: true };
+  }
+
+  const login = async (email: string, password: string): Promise<LoginResult> => {
     setIsLoading(true);
     try {
       const response = await loginApi(email, password);
-      const { accessToken, user: backendUser } = response.login;
 
-      // Validate that the user has the TRAINER role
-      const roleName = backendUser.role?.toUpperCase() || "";
-      if (roleName !== "TRAINER") {
-        return {
-          success: false,
-          error: "Access denied. Only trainer accounts can access this dashboard.",
-        };
+      if (!response.requiresOtp) {
+        // This device already verified OTP today — tokens already issued,
+        // no OTP screen needed.
+        return storeAuthenticatedSession(response);
       }
 
-      // Store in localStorage
-      localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
-      localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(backendUser));
-
-      setToken(accessToken);
-      setUser(backendUser);
-      return { success: true };
+      return {
+        success: true,
+        requiresOtp: true,
+        verificationId: response.verificationId,
+      };
     } catch (err: unknown) {
-      if (err instanceof AxiosError) {
-        if (err.response?.status === 401) {
-          return { success: false, error: "Invalid email or password." };
-        }
-        if (err.response?.status === 403) {
-          const msg = (err.response.data as { message?: string })?.message;
-          return {
-            success: false,
-            error: msg || "Account not yet activated. Please check your email for the setup link.",
-          };
-        }
-        if (err.response?.status === 429) {
-          const msg = (err.response.data as { message?: string })?.message;
-          return {
-            success: false,
-            error: msg || "Too many failed login attempts. Please try again later.",
-          };
-        }
-        if (err.response?.data && typeof err.response.data === "object") {
-          const data = err.response.data as { message?: string; error?: string };
-          if (data.message) return { success: false, error: data.message };
-          if (data.error) return { success: false, error: data.error };
-        }
-        if (err.code === "ERR_NETWORK") {
-          return {
-            success: false,
-            error: "Unable to connect to LMS backend server. Please check your connection.",
-          };
-        }
-      }
-      return { success: false, error: "An unexpected error occurred. Please try again." };
+      return { success: false, error: mapAuthError(err, "Invalid email or username or password.") };
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const verifyOtp = async (verificationId: string, otp: string): Promise<{ success: boolean; error?: string }> => {
+    setIsLoading(true);
+    try {
+      const response = await verifyOtpApi(verificationId, otp);
+      return storeAuthenticatedSession(response);
+    } catch (err: unknown) {
+      return { success: false, error: mapAuthError(err, "Invalid OTP. Please try again.") };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resendOtp = async (verificationId: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const response = await resendOtpApi(verificationId);
+      return { success: true, message: response.message };
+    } catch (err: unknown) {
+      return { success: false, error: mapAuthError(err, "Could not resend OTP. Please try again.") };
     }
   };
 
@@ -167,6 +254,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated,
       isLoading,
       login,
+      verifyOtp,
+      resendOtp,
       logout,
     }),
     [user, token, isAuthenticated, isLoading]

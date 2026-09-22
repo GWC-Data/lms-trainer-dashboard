@@ -1,4 +1,5 @@
 import axios, { AxiosError } from "axios";
+import { getOrCreateDeviceId } from "@/lib/deviceId";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
@@ -13,6 +14,7 @@ export const api = axios.create({
 
 // Storage keys
 export const TOKEN_STORAGE_KEY = "teqcertify_token";
+export const REFRESH_TOKEN_STORAGE_KEY = "teqcertify_refresh_token";
 export const USER_STORAGE_KEY = "teqcertify_user";
 
 // Public auth endpoints that must never attach or depend on an Authorization Bearer token
@@ -24,7 +26,27 @@ export const PUBLIC_AUTH_PATHS = [
   "/reset-password",
   "/auth/trainer-email",
   "/set-password",
+  "/auth/refresh-token",
+  "/auth/verify-otp",
+  "/auth/resend-otp",
 ];
+
+function clearAuthStorage() {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+  localStorage.removeItem(USER_STORAGE_KEY);
+}
+
+function redirectToLoginIfNeeded() {
+  if (
+    window.location.pathname !== "/login" &&
+    !window.location.pathname.startsWith("/set-password") &&
+    !window.location.pathname.startsWith("/forgot-password") &&
+    !window.location.pathname.startsWith("/reset-password")
+  ) {
+    window.location.href = "/login";
+  }
+}
 
 // Request interceptor — attach Bearer token if available, EXCEPT for public auth endpoints
 api.interceptors.request.use(
@@ -48,25 +70,55 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response interceptor — handle 401 global unauthorized
+// Shared in-flight refresh promise so multiple 401s firing at once (e.g.
+// several widgets fetching in parallel) trigger exactly one refresh call
+// instead of a stampede of redundant ones.
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function performTokenRefresh(): Promise<string | null> {
+  const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+  if (!storedRefreshToken) return null;
+
+  try {
+    const response = await api.post<RefreshTokenResponse>("/auth/refresh-token", {
+      refreshToken: storedRefreshToken,
+    });
+    const { accessToken, refreshToken } = response.data;
+    localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+    return accessToken;
+  } catch {
+    return null;
+  }
+}
+
+// Response interceptor — on 401, attempt one silent token refresh before
+// falling back to a hard logout/redirect.
 api.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      const url = error.config?.url || "";
-      const isPublicAuth = PUBLIC_AUTH_PATHS.some((path) => url.includes(path));
-      if (!isPublicAuth) {
-        localStorage.removeItem(TOKEN_STORAGE_KEY);
-        localStorage.removeItem(USER_STORAGE_KEY);
-        if (
-          window.location.pathname !== "/login" &&
-          !window.location.pathname.startsWith("/set-password") &&
-          !window.location.pathname.startsWith("/forgot-password") &&
-          !window.location.pathname.startsWith("/reset-password")
-        ) {
-          window.location.href = "/login";
-        }
+  async (error: AxiosError) => {
+    const originalRequest = error.config as (typeof error.config & { _retry?: boolean }) | undefined;
+    const url = originalRequest?.url || "";
+    const isPublicAuth = PUBLIC_AUTH_PATHS.some((path) => url.includes(path));
+
+    if (error.response?.status === 401 && !isPublicAuth && originalRequest && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      if (!refreshInFlight) {
+        refreshInFlight = performTokenRefresh().finally(() => {
+          refreshInFlight = null;
+        });
       }
+      const newAccessToken = await refreshInFlight;
+
+      if (newAccessToken) {
+        originalRequest.headers = originalRequest.headers || {};
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        return api.request(originalRequest);
+      }
+
+      clearAuthStorage();
+      redirectToLoginIfNeeded();
     }
     return Promise.reject(error);
   }
@@ -83,13 +135,62 @@ export interface BackendUser {
   permissions?: string[];
 }
 
-export interface LoginResponse {
+// Two shapes: a device that already verified OTP today (calendar-day rule,
+// not a rolling window) gets tokens back immediately with requiresOtp:
+// false; any other device gets requiresOtp: true and must go through
+// /auth/verify-otp.
+export interface LoginOtpRequiredResponse {
+  success: boolean;
+  requiresOtp: true;
   message: string;
-  login: {
-    accessToken: string;
-    tokenExpiry: number;
-    user: BackendUser;
-  };
+  verificationId: string;
+}
+
+export interface LoginAlreadyVerifiedTodayResponse {
+  success: boolean;
+  requiresOtp: false;
+  message: string;
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiry: number;
+  user: BackendUser;
+}
+
+export type LoginResponse = LoginOtpRequiredResponse | LoginAlreadyVerifiedTodayResponse;
+
+export interface VerifyOtpResponse {
+  success: boolean;
+  message: string;
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiry: number;
+  user: BackendUser;
+}
+
+export interface ResendOtpResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface RefreshTokenResponse {
+  message: string;
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiry: number;
+}
+
+export interface DeviceSession {
+  sessionId: string;
+  deviceName: string;
+  ipAddress: string;
+  createdAt: string;
+  lastActiveAt: string;
+  expiresAt: string;
+  isCurrentSession: boolean;
+}
+
+export interface DevicesResponse {
+  devices: DeviceSession[];
 }
 
 export interface VerifyTokenResponse {
@@ -112,7 +213,70 @@ export async function loginApi(email: string, password: string): Promise<LoginRe
   const response = await api.post<LoginResponse>("/auth/login", {
     email: email.trim().toLowerCase(),
     password,
+    deviceId: getOrCreateDeviceId(),
   });
+  return response.data;
+}
+
+/**
+ * Real Verify OTP API: POST /auth/verify-otp
+ * Completes login — this is where tokens are actually issued.
+ */
+export async function verifyOtpApi(verificationId: string, otp: string): Promise<VerifyOtpResponse> {
+  const response = await api.post<VerifyOtpResponse>("/auth/verify-otp", {
+    verificationId,
+    otp,
+  });
+  return response.data;
+}
+
+/**
+ * Real Resend OTP API: POST /auth/resend-otp
+ */
+export async function resendOtpApi(verificationId: string): Promise<ResendOtpResponse> {
+  const response = await api.post<ResendOtpResponse>("/auth/resend-otp", {
+    verificationId,
+  });
+  return response.data;
+}
+
+/**
+ * Attempts to refresh the access token using the stored refresh token,
+ * sharing the same in-flight/dedupe logic the response interceptor uses so
+ * a proactive background refresh and a reactive 401-triggered one never
+ * race each other into firing twice. Returns the new access token, or null
+ * if refreshing failed (revoked/expired refresh token, or none stored).
+ */
+export async function refreshTokenApi(): Promise<string | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = performTokenRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+/**
+ * Real Logout API: POST /auth/logout
+ * Revokes only the current device's session — other logged-in devices are unaffected.
+ */
+export async function logoutApi(): Promise<void> {
+  await api.post("/auth/logout");
+}
+
+/**
+ * Real Logged-in Devices API: GET /auth/devices
+ */
+export async function getDevicesApi(): Promise<DevicesResponse> {
+  const response = await api.get<DevicesResponse>("/auth/devices");
+  return response.data;
+}
+
+/**
+ * Real Revoke Device API: DELETE /auth/devices/:sessionId
+ */
+export async function revokeDeviceApi(sessionId: string): Promise<{ message: string }> {
+  const response = await api.delete<{ message: string }>(`/auth/devices/${sessionId}`);
   return response.data;
 }
 
