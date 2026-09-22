@@ -38,7 +38,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 function decodeTokenPayload(token: string): { exp?: number } | null {
   try {
     const parts = token.split(".");
-    if (parts.length !== 3) return true;
+    if (parts.length !== 3) return null;
     let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const padLength = (4 - (base64.length % 4)) % 4;
     base64 += "=".repeat(padLength);
@@ -56,10 +56,10 @@ function decodeTokenPayload(token: string): { exp?: number } | null {
     }
 
     const payload = JSON.parse(jsonPayload);
-    if (payload && typeof payload.exp === "number") {
-      return Date.now() >= payload.exp * 1000;
+    if (payload && typeof payload === "object") {
+      return payload as { exp?: number };
     }
-    return false;
+    return null;
   } catch {
     return null;
   }
