@@ -56,25 +56,41 @@ export default function Topbar({ toggleSidebar }: TopbarProps) {
   };
 
   return (
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#F5E2DA] bg-white px-4 sm:px-6">
-      <div className="flex min-w-0 items-center gap-1.5 text-xs sm:text-sm text-[#8C7A70]">
+    <header className="flex h-13 sm:h-14 shrink-0 items-center justify-between border-b border-[#F5E2DA]/80 bg-white/90 backdrop-blur-md px-3 sm:px-5 sticky top-0 z-30 transition-all">
+      <div className="flex min-w-0 items-center gap-2 text-xs sm:text-sm text-[#8C7A70]">
         {toggleSidebar && (
           <button
             onClick={toggleSidebar}
-            className="mr-2 sm:mr-3 flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-xl text-[#B7A79D] hover:bg-[#FBECE7] hover:text-[#DE896A] transition-colors"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[#8C7A70] hover:bg-[#FBECE7] hover:text-[#DE896A] border border-[#F0DED4] sm:border-transparent sm:hover:border-[#F5D1C4] transition-all cursor-pointer"
             aria-label="Toggle Navigation"
           >
-            <Menu className="h-5 w-5" />
+            <Menu className="h-4 w-4" />
           </button>
         )}
-        <Link to="/" className="flex items-center text-[#B7A79D] hover:text-[#DE896A] shrink-0">
-          <Home className="h-4 w-4" />
-        </Link>
-        <div className="flex items-center gap-1.5 truncate">
+        {/* Mobile-only clean page title */}
+        <span className="font-bold text-[#3A2A22] text-sm sm:hidden truncate">
+          {crumbs[crumbs.length - 1] || "Dashboard"}
+        </span>
+
+        {/* Desktop/Tablet full breadcrumbs */}
+        <div className="hidden sm:flex items-center gap-1.5 truncate">
+          <Link
+            to="/"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#B7A79D] hover:bg-[#FBECE7] hover:text-[#DE896A] transition-colors shrink-0"
+            title="Dashboard"
+          >
+            <Home className="h-3.5 w-3.5" />
+          </Link>
           {crumbs.map((crumb, i) => (
             <span key={i} className="flex items-center gap-1.5 truncate">
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#D8C7BE]" />
-              <span className={i === crumbs.length - 1 ? "font-medium text-[#3A2A22] truncate" : "truncate"}>
+              <span
+                className={
+                  i === crumbs.length - 1
+                    ? "font-semibold text-[#3A2A22] text-xs sm:text-sm truncate"
+                    : "text-xs sm:text-sm text-[#8C7A70] truncate hover:text-[#3A2A22] transition-colors"
+                }
+              >
                 {crumb}
               </span>
             </span>
@@ -87,12 +103,12 @@ export default function Topbar({ toggleSidebar }: TopbarProps) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="relative flex h-9 w-9 items-center justify-center rounded-xl text-[#8C7A70] hover:bg-[#FBECE7] hover:text-[#DE896A] transition-colors focus:outline-none"
+              className="relative flex h-8 w-8 sm:h-8.5 sm:w-8.5 items-center justify-center rounded-xl border border-[#F5E2DA] bg-white text-[#7C695E] hover:bg-[#FBECE7] hover:text-[#DE896A] hover:border-[#F5D1C4] transition-all focus:outline-none shadow-xs cursor-pointer"
               aria-label="Notifications"
             >
-              <Bell className="h-[18px] w-[18px]" />
+              <Bell className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {!loading && atRiskCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold text-white shadow-xs ring-2 ring-white animate-pulse">
                   {atRiskCount}
                 </span>
               )}

@@ -36,7 +36,7 @@ export default function DashboardLayout() {
           <main className="relative flex-1 overflow-hidden">
             <div
               ref={scrollRef}
-              className="app-canvas-bg h-full overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-6"
+              className="app-canvas-bg h-full overflow-y-auto overflow-x-hidden px-3 sm:px-4.5 lg:px-6 py-3 sm:py-4"
             >
               <Outlet />
             </div>

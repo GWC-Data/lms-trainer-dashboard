@@ -163,6 +163,14 @@ export interface ResetPasswordResponse {
   message: string;
 }
 
+export interface TrainerAttendanceSummary {
+  totalSessions: number;
+  present: number;
+  absent: number;
+  late?: number;
+  percentage: number | null;
+}
+
 export interface DashboardSummary {
   assignedCourses: number;
   activeBatches: number;
@@ -173,6 +181,8 @@ export interface DashboardSummary {
   atRiskTrainees?: number;
   pendingEvaluations?: number;
   averageAttendance?: number;
+  myAttendance?: TrainerAttendanceSummary;
+  trainerAttendance?: TrainerAttendanceSummary;
 }
 
 export interface DashboardCourse {
