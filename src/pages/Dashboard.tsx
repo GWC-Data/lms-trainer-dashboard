@@ -70,7 +70,7 @@ export default function Dashboard() {
   };
 
   if (loading && !dashboardData) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   const summary = dashboardData?.summary || {

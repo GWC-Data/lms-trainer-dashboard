@@ -170,15 +170,17 @@
 /* Smooth continuous TeqCertify brand loader animations */
 @keyframes teqcertify-spin {
   from {
-    transform: rotate(0deg);
+    transform: rotate(0deg) translateZ(0);
   }
   to {
-    transform: rotate(360deg);
+    transform: rotate(360deg) translateZ(0);
   }
 }
 
 .animate-spin-slow {
-  animation: teqcertify-spin 3s linear infinite;
+  animation: teqcertify-spin 2.2s linear infinite;
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 @keyframes teqcertify-pulse-ring {

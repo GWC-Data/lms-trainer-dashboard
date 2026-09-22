@@ -191,7 +191,7 @@ export default function Trainees() {
   }, [trainees, requestedTraineeId]);
 
   if ((loadingSelectors || loadingTrainees) && trainees.length === 0) {
-    return <PageLoader text="Loading..." />;
+    return <PageLoader />;
   }
 
   return (
@@ -323,7 +323,7 @@ export default function Trainees() {
               {loadingTrainees ? (
                 <tr>
                   <td colSpan={6} className="py-12">
-                    <PageLoader text="Loading..." className="min-h-[200px] py-6" />
+                    <PageLoader className="min-h-[180px] py-6" />
                   </td>
                 </tr>
               ) : trainees.length === 0 ? (
@@ -436,7 +436,7 @@ export default function Trainees() {
                               </div>
 
                               {isLoadingDetail ? (
-                                <p className="mt-3 text-xs text-[#B7A79D]">Loading module hierarchy...</p>
+                                <PageLoader size="sm" className="min-h-[70px] py-3" />
                               ) : enrollments.length === 0 ? (
                                 <p className="mt-3 text-xs text-[#B7A79D]">No module details available.</p>
                               ) : (
