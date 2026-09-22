@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
+import PageLoader from "@/components/ui/PageLoader";
 import {
   Select,
   SelectTrigger,
@@ -140,6 +141,10 @@ export default function Batches() {
     setSelectedCourseFilter("all");
     setSelectedModeFilter("all");
   };
+
+  if (loading && batches.length === 0) {
+    return <PageLoader />;
+  }
 
   return (
     <div className="space-y-6">

@@ -33,6 +33,7 @@ import {
 } from "@/services/api";
 import AddModuleModal from "@/components/forms/AddModuleModal";
 import { cn } from "@/lib/utils";
+import PageLoader from "@/components/ui/PageLoader";
 
 // Helper to strip internal IDs and UUIDs from visible names
 function cleanDisplayString(name?: string | null): string {
@@ -281,6 +282,10 @@ export default function Modules() {
     (selectedBatch
       ? `Modules assigned to ${cleanDisplayString(selectedBatch.batchName)} · ${batchResolvedCourseName || "No course"}`
       : "Browse modules for your assigned curriculum and manage teaching materials.");
+
+  if ((loading || loadingRef) && modules.length === 0) {
+    return <PageLoader />;
+  }
 
   return (
     <div className="w-full min-w-0 max-w-full space-y-6">

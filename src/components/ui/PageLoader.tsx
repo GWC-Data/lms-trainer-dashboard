@@ -1,39 +1,57 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import faviconImg from '@/assets/favicon.png';
+import React from "react";
+import faviconImg from "@/assets/favicon.png";
+import { cn } from "@/lib/utils";
 
-interface PageLoaderProps {
+export interface PageLoaderProps {
   text?: string;
+  className?: string;
+  imageClassName?: string;
+  size?: "sm" | "md" | "lg" | "xl";
+  fullScreen?: boolean;
 }
 
-const PageLoader: React.FC<PageLoaderProps> = ({ text = 'Loading...' }) => {
-  return (
-    <motion.div
-      key="page-loader"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
-      className="absolute inset-0 flex flex-col items-center justify-center bg-[#fdf1ee]/80 backdrop-blur-[2px] z-50"
-    >
-      <div className="relative flex items-center justify-center">
-        {/* Outer Spinner */}
-        <div className="w-16 h-16 rounded-full border-4 border-orange-500/20 border-t-orange-500 animate-spin" />
+const sizeClasses: Record<"sm" | "md" | "lg" | "xl", string> = {
+  sm: "h-10 w-10 sm:h-12 sm:w-12",
+  md: "h-14 w-14 sm:h-16 sm:w-16",
+  lg: "h-20 w-20 sm:h-24 sm:w-24",
+  xl: "h-24 w-24 sm:h-28 sm:w-28",
+};
 
-        {/* Centered Pulsing Logo */}
+export const PageLoader: React.FC<PageLoaderProps> = ({
+  className,
+  imageClassName,
+  size = "lg",
+  fullScreen = false,
+}) => {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Loading"
+      className={cn(
+        "flex flex-col items-center justify-center w-full",
+        fullScreen
+          ? "fixed inset-0 z-50 bg-[#FFF8F6]/95 backdrop-blur-[2px]"
+          : "min-h-[50vh] sm:min-h-[60vh] py-12",
+        className
+      )}
+    >
+      <div className="flex items-center justify-center">
+        {/* Big smoothly rotating TeqCertify brand icon */}
         <img
           src={faviconImg}
           alt="Loading"
-          className="absolute w-8 h-8 object-contain animate-pulse"
+          className={cn(
+            sizeClasses[size] || sizeClasses.lg,
+            "object-contain animate-spin-slow select-none pointer-events-none drop-shadow-sm",
+            imageClassName
+          )}
         />
       </div>
-      {text && (
-        <p className="text-[10px] font-bold text-orange-500/70 uppercase tracking-widest mt-4">
-          {text}
-        </p>
-      )}
-    </motion.div>
+      <span className="sr-only">Loading</span>
+    </div>
   );
 };
 
 export default PageLoader;
+

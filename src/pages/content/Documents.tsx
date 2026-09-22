@@ -43,6 +43,7 @@ import {
 } from "@/services/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import PageLoader from "@/components/ui/PageLoader";
 
 const fileToneMap: Record<string, "red" | "blue" | "amber" | "green" | "neutral"> = {
   PDF: "red",
@@ -331,6 +332,10 @@ export default function Documents() {
   const contextModuleName = cleanDisplayString(documents[0]?.moduleName);
   const contextBatchName = cleanDisplayString(selectedBatch?.batchName || documents[0]?.batchName);
 
+  if ((loading || loadingRef) && documents.length === 0) {
+    return <PageLoader />;
+  }
+
   return (
     <div className="w-full min-w-0 max-w-full space-y-6">
       {/* ─────────────────────────────────────────────────────────────────────────
@@ -539,8 +544,8 @@ export default function Documents() {
             <tbody className="divide-y divide-[#F5E2DA]">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-12 text-center text-sm text-[#B7A79D]">
-                    Loading materials...
+                  <td colSpan={8} className="py-12">
+                    <PageLoader className="min-h-[180px] py-6" />
                   </td>
                 </tr>
               ) : selectedCourseId === "none" ? (

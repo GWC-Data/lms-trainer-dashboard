@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { getTrainerCoursesApi, TrainerCourseItem } from "@/services/api";
+import PageLoader from "@/components/ui/PageLoader";
 
 import img1 from "@/assets/1.png";
 import img2 from "@/assets/2.png";
@@ -213,6 +214,10 @@ export default function MyCourses() {
     setSelectedCourseFilter("all");
     setSelectedBatchFilter("all");
   };
+
+  if (loading && courses.length === 0) {
+    return <PageLoader />;
+  }
 
   return (
     <div className="space-y-6">
