@@ -39,7 +39,6 @@ function decodeTokenPayload(token: string): { exp?: number; [key: string]: unkno
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    if (parts.length !== 3) return null;
     let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const padLength = (4 - (base64.length % 4)) % 4;
     base64 += "=".repeat(padLength);
@@ -60,7 +59,6 @@ function decodeTokenPayload(token: string): { exp?: number; [key: string]: unkno
     if (payload && typeof payload === "object") {
       return payload as { exp?: number; [key: string]: unknown };
     }
-    return null;
     return null;
   } catch {
     return null;
@@ -247,15 +245,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       const response = await verifyOtpApi(verificationId, otp);
-      const authPayload = response.login || response;
-      if (!authPayload.accessToken || !authPayload.user) {
+      if (!response.accessToken || !response.user) {
         return { success: false, error: "Invalid response from server." };
       }
-      return storeAuthenticatedSession({
-        accessToken: authPayload.accessToken,
-        refreshToken: authPayload.refreshToken || "",
-        user: authPayload.user,
-      });
+      return storeAuthenticatedSession(response);
     } catch (err: unknown) {
       return { success: false, error: mapAuthError(err, "Invalid OTP. Please try again.") };
     } finally {
