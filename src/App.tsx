@@ -7,7 +7,6 @@ import PublicOnlyRoute from "@/components/auth/PublicOnlyRoute";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import Login from "@/pages/Login";
 import SetPassword from "@/pages/SetPassword";
-import TrainerEmail from "@/pages/TrainerEmail";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
@@ -34,7 +33,6 @@ export default function App() {
           <Routes>
             <Route element={<PublicOnlyRoute />}>
               <Route path="/login" element={<Login />} />
-              <Route path="/trainer-email" element={<TrainerEmail />} />
               <Route path="/set-password" element={<SetPassword />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />

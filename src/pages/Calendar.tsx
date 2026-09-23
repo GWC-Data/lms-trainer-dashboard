@@ -33,6 +33,7 @@ import { fetchBatchClassScheduleByBatchIdApi } from "@/helpers/api/batchClassSch
 import { fetchUsersbyIdApi } from "@/helpers/api/userApi";
 import { getAttendanceByUserIdApi } from "@/helpers/api/attendanceApi";
 import { getTrainerBatchesApi } from "@/services/api";
+import { useTrainerDashboard } from "@/context/TrainerDashboardContext";
 import NoBatchEnrollment from "../SideBar/noBatchEnrollment";
 import PageLoader from "@/components/ui/PageLoader";
 import {
@@ -115,6 +116,7 @@ interface UnifiedEventItem {
 }
 
 const Calendar: React.FC = () => {
+  const { refreshDashboard } = useTrainerDashboard();
   const navigate = useNavigate();
 
   // Navigation & Date State
@@ -631,6 +633,9 @@ const Calendar: React.FC = () => {
         // Immediately refresh real batch events from BigQuery for this batch
         await loadBatchEvents(targetBatch);
 
+        // Immediately refresh Trainer Dashboard upcoming schedule cache
+        refreshDashboard().catch(console.error);
+
         // Switch calendar selected date to the event date to see it right away
         setSelectedDate(moment(formEventDate));
         setCurrentMonth(moment(formEventDate));
@@ -711,6 +716,9 @@ const Calendar: React.FC = () => {
         // Refresh batch events from BigQuery
         await loadBatchEvents(targetBatch);
 
+        // Immediately refresh Trainer Dashboard upcoming schedule cache
+        refreshDashboard().catch(console.error);
+
         // Switch calendar view to the updated date
         setSelectedDate(moment(editEventDate));
         setCurrentMonth(moment(editEventDate));
@@ -741,6 +749,9 @@ const Calendar: React.FC = () => {
 
         // Immediately refresh real batch events from BigQuery
         await loadBatchEvents();
+
+        // Immediately refresh Trainer Dashboard upcoming schedule cache
+        refreshDashboard().catch(console.error);
       } else {
         toast.error(res?.message || "Failed to delete event.");
       }

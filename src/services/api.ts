@@ -24,7 +24,6 @@ export const PUBLIC_AUTH_PATHS = [
   "/forgot-password",
   "/auth/reset-password",
   "/reset-password",
-  "/auth/trainer-email",
   "/set-password",
   "/auth/refresh-token",
   "/auth/verify-otp",
@@ -146,10 +145,18 @@ export interface LoginOtpRequiredResponse {
   verificationId: string;
 }
 
+export interface LoginPayload {
+  accessToken: string;
+  refreshToken: string;
+  tokenExpiry: number;
+  user: BackendUser;
+}
+
 export interface LoginAlreadyVerifiedTodayResponse {
   success: boolean;
-  requiresOtp: false;
+  requiresOtp?: boolean;
   message: string;
+  login?: LoginPayload;
   accessToken: string;
   refreshToken: string;
   tokenExpiry: number;
@@ -210,12 +217,20 @@ export interface SetPasswordResponse {
  * Real Login API: POST /auth/login
  */
 export async function loginApi(email: string, password: string): Promise<LoginResponse> {
-  const response = await api.post<LoginResponse>("/auth/login", {
+  const response = await api.post<any>("/auth/login", {
     email: email.trim().toLowerCase(),
     password,
     deviceId: getOrCreateDeviceId(),
   });
-  return response.data;
+  const data = response.data;
+  const payload = data?.login || data;
+  return {
+    ...data,
+    accessToken: payload.accessToken || data.accessToken,
+    refreshToken: payload.refreshToken || data.refreshToken,
+    tokenExpiry: payload.tokenExpiry || data.tokenExpiry,
+    user: payload.user || data.user,
+  };
 }
 
 /**
@@ -310,12 +325,6 @@ export async function setPasswordApi(
   return response.data;
 }
 
-export interface TrainerEmailResponse {
-  success: boolean;
-  message: string;
-  token?: string;
-}
-
 export interface ForgotPasswordResponse {
   success: boolean;
   message: string;
@@ -360,10 +369,14 @@ export interface DashboardCourse {
   batches: number;
   avgProgress: number;
   nextSession: string | null;
+  nextSessionDate?: string | null;
+  nextSessionTitle?: string | null;
 }
 
 export interface DashboardScheduleItem {
   id: string;
+  courseId?: string;
+  batchId?: string;
   batch: string;
   batchCode?: string;
   date: string;
@@ -406,16 +419,6 @@ export interface TrainerDashboardResponse {
  */
 export async function getTrainerDashboardApi(): Promise<TrainerDashboardResponse> {
   const response = await api.get<TrainerDashboardResponse>("/api/trainer/dashboard");
-  return response.data;
-}
-/**
- * Real Trainer Email / First-time invite request: POST /auth/trainer-email
- */
-export async function trainerEmailApi(email: string, token?: string): Promise<TrainerEmailResponse> {
-  const response = await api.post<TrainerEmailResponse>("/auth/trainer-email", {
-    email: email.trim().toLowerCase(),
-    ...(token ? { token } : {}),
-  });
   return response.data;
 }
 

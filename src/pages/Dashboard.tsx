@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { BookOpen, Layers, Users, Clock, AlertCircle, RefreshCw } from "lucide-react";
 import Button from "@/components/ui/Button";
@@ -20,6 +20,10 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { dashboardData, loading, error, refreshDashboard } = useTrainerDashboard();
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    refreshDashboard().catch(console.error);
+  }, [refreshDashboard]);
 
   const trainerFirstName =
     user?.firstName || (user?.email ? user.email.split("@")[0] : "Trainer");

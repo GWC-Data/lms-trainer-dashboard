@@ -76,12 +76,25 @@ export const fetchBatchEventsApi = async (batchId?: string): Promise<BatchEvent[
   }
 };
 
+function notifyScheduleUpdated(action: "create" | "update" | "delete", id?: string) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("lms:schedule-updated", {
+        detail: { action, id, timestamp: Date.now() },
+      })
+    );
+  }
+}
+
 /**
  * Create a new batch event (Admin only).
  * Hits POST /batch-events.
  */
 export const createBatchEventApi = async (data: Omit<BatchEvent, "id">): Promise<any> => {
   const response = await api.post("/batch-events", data);
+  if (response.data && response.data.success !== false) {
+    notifyScheduleUpdated("create");
+  }
   return response.data;
 };
 
@@ -91,6 +104,9 @@ export const createBatchEventApi = async (data: Omit<BatchEvent, "id">): Promise
  */
 export const updateBatchEventApi = async (id: string, data: Partial<BatchEvent>): Promise<any> => {
   const response = await api.put(`/batch-events/${id}`, data);
+  if (response.data && response.data.success !== false) {
+    notifyScheduleUpdated("update", id);
+  }
   return response.data;
 };
 
@@ -100,5 +116,8 @@ export const updateBatchEventApi = async (id: string, data: Partial<BatchEvent>)
  */
 export const deleteBatchEventApi = async (id: string): Promise<any> => {
   const response = await api.delete(`/batch-events/${id}`);
+  if (response.data && response.data.success !== false) {
+    notifyScheduleUpdated("delete", id);
+  }
   return response.data;
 };
