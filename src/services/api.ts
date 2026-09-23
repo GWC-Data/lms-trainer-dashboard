@@ -1,5 +1,7 @@
 import axios, { AxiosError } from "axios";
 import { getOrCreateDeviceId } from "@/lib/deviceId";
+import { store } from "@/store/store";
+import { restoreSessionThunk } from "@/store/authSlice";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
@@ -9,13 +11,9 @@ export const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+  withCredentials: true,
   timeout: 15000,
 });
-
-// Storage keys
-export const TOKEN_STORAGE_KEY = "teqcertify_token";
-export const REFRESH_TOKEN_STORAGE_KEY = "teqcertify_refresh_token";
-export const USER_STORAGE_KEY = "teqcertify_user";
 
 // Public auth endpoints that must never attach or depend on an Authorization Bearer token
 export const PUBLIC_AUTH_PATHS = [
@@ -30,12 +28,6 @@ export const PUBLIC_AUTH_PATHS = [
   "/auth/resend-otp",
 ];
 
-function clearAuthStorage() {
-  localStorage.removeItem(TOKEN_STORAGE_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-  localStorage.removeItem(USER_STORAGE_KEY);
-}
-
 function redirectToLoginIfNeeded() {
   if (
     window.location.pathname !== "/login" &&
@@ -47,19 +39,21 @@ function redirectToLoginIfNeeded() {
   }
 }
 
-// Request interceptor — attach Bearer token if available, EXCEPT for public auth endpoints
+// Request interceptor — attach the Bearer token from the Redux auth store,
+// EXCEPT for public auth endpoints. The access token lives only in memory
+// now (never localStorage); the refresh token lives solely in the httpOnly
+// cookie the browser attaches automatically via withCredentials.
 api.interceptors.request.use(
   (config) => {
     const url = config.url || "";
     const isPublicAuth = PUBLIC_AUTH_PATHS.some((path) => url.includes(path));
 
     if (isPublicAuth) {
-      // Ensure public auth requests never attach or depend on a stale JWT in localStorage
       if (config.headers && "Authorization" in config.headers) {
         delete config.headers.Authorization;
       }
     } else {
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+      const token = store.getState().auth.accessToken;
       if (token && config.headers) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -69,30 +63,10 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Shared in-flight refresh promise so multiple 401s firing at once (e.g.
-// several widgets fetching in parallel) trigger exactly one refresh call
-// instead of a stampede of redundant ones.
-let refreshInFlight: Promise<string | null> | null = null;
-
-async function performTokenRefresh(): Promise<string | null> {
-  const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-  if (!storedRefreshToken) return null;
-
-  try {
-    const response = await api.post<RefreshTokenResponse>("/auth/refresh-token", {
-      refreshToken: storedRefreshToken,
-    });
-    const { accessToken, refreshToken } = response.data;
-    localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
-    return accessToken;
-  } catch {
-    return null;
-  }
-}
-
-// Response interceptor — on 401, attempt one silent token refresh before
-// falling back to a hard logout/redirect.
+// Response interceptor — on 401, attempt one silent session restore (via the
+// refresh-token cookie) before falling back to a hard logout/redirect.
+// restoreSessionApi() below dedupes concurrent callers itself, so this
+// naturally coalesces with e.g. the bootstrap restore firing at the same time.
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
@@ -103,21 +77,20 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !isPublicAuth && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
 
-      if (!refreshInFlight) {
-        refreshInFlight = performTokenRefresh().finally(() => {
-          refreshInFlight = null;
-        });
-      }
-      const newAccessToken = await refreshInFlight;
+      const restored = await store.dispatch(restoreSessionThunk()).unwrap();
 
-      if (newAccessToken) {
+      if (restored.status === "authenticated") {
         originalRequest.headers = originalRequest.headers || {};
-        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        originalRequest.headers.Authorization = `Bearer ${restored.accessToken}`;
         return api.request(originalRequest);
       }
 
-      clearAuthStorage();
-      redirectToLoginIfNeeded();
+      // Only a definitive "no" redirects to login — a transient failure to
+      // restore (network blip, 5xx) leaves the user on the current page;
+      // the original 401 just propagates as an error for that one request.
+      if (restored.status === "unauthenticated") {
+        redirectToLoginIfNeeded();
+      }
     }
     return Promise.reject(error);
   }
@@ -189,6 +162,7 @@ export interface RefreshTokenResponse {
   accessToken: string;
   refreshToken: string;
   tokenExpiry: number;
+  user?: BackendUser;
 }
 
 export interface DeviceSession {
@@ -260,20 +234,68 @@ export async function resendOtpApi(verificationId: string): Promise<ResendOtpRes
   return response.data;
 }
 
+// Three outcomes, deliberately distinguished: a definitive "no" (the server
+// affirmatively said the refresh token is invalid/expired/revoked, or there
+// was no session to find) must log the user out, but a transient failure
+// (network blip, timeout, 5xx — e.g. the dev server mid-restart) must NOT:
+// treating those the same means a brief network hiccup during the
+// background proactive-refresh silently logs out a user with a perfectly
+// valid session, which is exactly the "logged out after ~1hr" symptom this
+// type exists to prevent.
+export type SessionRestoreResult =
+  | { status: "authenticated"; accessToken: string; user: BackendUser }
+  | { status: "unauthenticated" }
+  | { status: "unknown" };
+
+// Shared in-flight promise so concurrent callers (several components
+// mounting at once, or the bootstrap restore racing a 401-triggered one)
+// collapse into a single network call — the backend rotates the refresh
+// token cookie on every call, so firing it twice in parallel would have the
+// second request racing the first's just-rotated cookie.
+let restoreInFlight: Promise<SessionRestoreResult> | null = null;
+
 /**
- * Attempts to refresh the access token using the stored refresh token,
- * sharing the same in-flight/dedupe logic the response interceptor uses so
- * a proactive background refresh and a reactive 401-triggered one never
- * race each other into firing twice. Returns the new access token, or null
- * if refreshing failed (revoked/expired refresh token, or none stored).
+ * Attempts to restore a session purely from the httpOnly refresh-token
+ * cookie (sent automatically via withCredentials) — no client-readable
+ * token is ever passed.
  */
-export async function refreshTokenApi(): Promise<string | null> {
-  if (!refreshInFlight) {
-    refreshInFlight = performTokenRefresh().finally(() => {
-      refreshInFlight = null;
-    });
+export async function restoreSessionApi(): Promise<SessionRestoreResult> {
+  if (!restoreInFlight) {
+    restoreInFlight = (async (): Promise<SessionRestoreResult> => {
+      try {
+        const response = await api.post<RefreshTokenResponse>("/auth/refresh-token");
+        const { accessToken, user } = response.data;
+        if (!user) {
+          console.warn("[auth] refresh-token succeeded but response had no user — treating as logged out", response.data);
+          return { status: "unauthenticated" };
+        }
+        return { status: "authenticated", accessToken, user };
+      } catch (err) {
+        // Surfaced so a "logged out after ~1hr" report can be diagnosed from
+        // the browser console instead of guessing.
+        if (err instanceof AxiosError) {
+          console.warn(
+            `[auth] session restore failed: ${err.response?.status ?? "network error"} ${err.response?.data?.errorCode ?? err.code ?? ""}`,
+            err.response?.data ?? err.message
+          );
+          // A response actually came back and explicitly said the refresh
+          // token is invalid/expired/revoked (or malformed) — that's the
+          // only case that should log the user out. Anything else (no
+          // response at all, or a 5xx) is a transient failure to determine
+          // session validity, not proof the session is gone.
+          if (err.response?.status === 401) {
+            return { status: "unauthenticated" };
+          }
+          return { status: "unknown" };
+        }
+        console.warn("[auth] session restore failed with a non-Axios error", err);
+        return { status: "unknown" };
+      } finally {
+        restoreInFlight = null;
+      }
+    })();
   }
-  return refreshInFlight;
+  return restoreInFlight;
 }
 
 /**

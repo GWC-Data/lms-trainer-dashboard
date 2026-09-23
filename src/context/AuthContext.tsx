@@ -1,17 +1,13 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useRef } from "react";
+import type { BackendUser } from "@/services/api";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
-  loginApi,
-  verifyOtpApi,
-  resendOtpApi,
-  logoutApi,
-  refreshTokenApi,
-  TOKEN_STORAGE_KEY,
-  REFRESH_TOKEN_STORAGE_KEY,
-  USER_STORAGE_KEY,
-  type BackendUser,
-} from "@/services/api";
-import { AxiosError } from "axios";
+  loginThunk,
+  verifyOtpThunk,
+  resendOtpThunk,
+  restoreSessionThunk,
+  logoutThunk,
+} from "@/store/authSlice";
 
 export interface User extends BackendUser {}
 
@@ -22,20 +18,7 @@ export interface LoginResult {
   verificationId?: string;
 }
 
-interface AuthContextValue {
-  user: User | null;
-  token: string | null;
-  isAuthenticated: boolean;
-  isLoading: boolean;
-  login: (email: string, password: string) => Promise<LoginResult>;
-  verifyOtp: (verificationId: string, otp: string) => Promise<{ success: boolean; error?: string }>;
-  resendOtp: (verificationId: string) => Promise<{ success: boolean; message?: string; error?: string }>;
-  logout: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null);
-
-function decodeTokenPayload(token: string): { exp?: number; [key: string]: unknown } | null {
+function decodeTokenPayload(token: string): { exp?: number } | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
@@ -57,7 +40,7 @@ function decodeTokenPayload(token: string): { exp?: number; [key: string]: unkno
 
     const payload = JSON.parse(jsonPayload);
     if (payload && typeof payload === "object") {
-      return payload as { exp?: number; [key: string]: unknown };
+      return payload as { exp?: number };
     }
     return null;
   } catch {
@@ -65,17 +48,10 @@ function decodeTokenPayload(token: string): { exp?: number; [key: string]: unkno
   }
 }
 
-function isTokenExpired(token: string | null): boolean {
-  if (!token) return true;
-  const payload = decodeTokenPayload(token);
-  if (!payload || typeof payload.exp !== "number") return true;
-  return Date.now() >= payload.exp * 1000;
-}
-
 // Milliseconds until the token's exp claim, or null if it can't be read.
 function getMsUntilExpiry(token: string): number | null {
   const payload = decodeTokenPayload(token);
-  if (!payload || typeof payload.exp !== "number") return null;
+  if (!payload?.exp) return null;
   return payload.exp * 1000 - Date.now();
 }
 
@@ -83,70 +59,31 @@ function getMsUntilExpiry(token: string): number | null {
 // races a just-expired access token.
 const REFRESH_BEFORE_EXPIRY_MS = 2 * 60 * 1000;
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => {
-    const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (stored && !isTokenExpired(stored)) {
-      return stored;
-    }
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    localStorage.removeItem(USER_STORAGE_KEY);
-    return null;
-  });
-
-  const [user, setUser] = useState<User | null>(() => {
-    const storedUser = localStorage.getItem(USER_STORAGE_KEY);
-    const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (storedToken && storedUser && !isTokenExpired(storedToken)) {
-      try {
-        return JSON.parse(storedUser);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
-
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+/**
+ * Auth state now lives in Redux (see src/store/authSlice.ts) rather than in
+ * this context. This hook is kept as the stable call site the rest of the
+ * app already uses (`useAuth()`), just backed by the store — a session
+ * restore + role check `isAuthenticated` and login/verifyOtp/resendOtp/logout
+ * that unwrap the thunks into the same { success, error? } shape callers
+ * already expect.
+ */
+export function useAuth() {
+  const dispatch = useAppDispatch();
+  const { user, accessToken, isLoading, isBootstrapping } = useAppSelector((state) => state.auth);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const logout = async () => {
-    if (refreshTimerRef.current) {
-      clearTimeout(refreshTimerRef.current);
-      refreshTimerRef.current = null;
-    }
-    // Best-effort: a failed logout call must never trap the user in a
-    // logged-in-looking state client-side — storage is cleared regardless.
-    try {
-      await logoutApi();
-    } catch {
-      // ignore
-    }
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-    localStorage.removeItem(USER_STORAGE_KEY);
-    setToken(null);
-    setUser(null);
-  };
 
   // Proactively refreshes the access token shortly before it expires, so an
   // active user is never interrupted by a hard timeout. Falls back to
   // logout only if the refresh itself fails (revoked/expired session).
   useEffect(() => {
-    if (!token) return;
+    if (!accessToken) return;
 
-    const msUntilExpiry = getMsUntilExpiry(token);
+    const msUntilExpiry = getMsUntilExpiry(accessToken);
     if (msUntilExpiry === null) return;
 
     const delay = Math.max(msUntilExpiry - REFRESH_BEFORE_EXPIRY_MS, 1000);
-    refreshTimerRef.current = setTimeout(async () => {
-      const newAccessToken = await refreshTokenApi();
-      if (newAccessToken) {
-        localStorage.setItem(TOKEN_STORAGE_KEY, newAccessToken);
-        setToken(newAccessToken);
-      } else {
-        logout();
-      }
+    refreshTimerRef.current = setTimeout(() => {
+      dispatch(restoreSessionThunk());
     }, delay);
 
     return () => {
@@ -155,139 +92,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshTimerRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [accessToken, dispatch]);
 
-  // The backend already returns a user-facing `message` for every login/OTP
-  // failure branch (invalid creds, account not activated, rate-limited,
-  // invalid/expired/max-attempts OTP, device limit, resend cooldown, ...) —
-  // so this just surfaces that message, with a network/fallback case.
-  function mapAuthError(err: unknown, fallbackMessage: string): string {
-    if (err instanceof AxiosError) {
-      const data = err.response?.data as { message?: string; error?: string } | undefined;
-      if (data?.message) return data.message;
-      if (data?.error) return data.error;
-      if (err.code === "ERR_NETWORK") {
-        return "Unable to connect to LMS backend server. Please check your connection.";
-      }
-    }
-    return fallbackMessage;
-  }
-
-  // Shared by the "already verified today" branch of login() and
-  // verifyOtp() — both receive the same { accessToken, refreshToken, user }
-  // shape once tokens actually exist, they just get there via different requests.
-  function storeAuthenticatedSession(auth: {
-    accessToken?: string;
-    refreshToken?: string;
-    user?: BackendUser;
-    login?: {
-      accessToken?: string;
-      refreshToken?: string;
-      user?: BackendUser;
-    };
-  }): { success: boolean; error?: string } {
-    const accessToken = auth.login?.accessToken || auth.accessToken;
-    const refreshToken = auth.login?.refreshToken || auth.refreshToken;
-    const user = auth.login?.user || auth.user;
-
-    if (!accessToken || !refreshToken || !user) {
-      return {
-        success: false,
-        error: "Invalid authentication response from server.",
-      };
-    }
-
-    const roleName = user.role?.toUpperCase() || "";
-    if (roleName !== "TRAINER") {
-      return {
-        success: false,
-        error: "Access denied. Only trainer accounts can access this dashboard.",
-      };
-    }
-
-    localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
-
-    setToken(accessToken);
-    setUser(user);
-    return { success: true };
-  }
+  const isAuthenticated = Boolean(accessToken && user?.role?.toUpperCase() === "TRAINER");
 
   const login = async (email: string, password: string): Promise<LoginResult> => {
-    setIsLoading(true);
-    try {
-      const response = await loginApi(email, password);
-
-      if (!response.requiresOtp || (response as any).login || (response as any).accessToken) {
-        // Tokens issued — establish authenticated session directly, no OTP screen needed.
-        const stored = storeAuthenticatedSession(response as any);
-        return {
-          ...stored,
-          requiresOtp: false,
-        };
-      }
-
-      return {
-        success: true,
-        requiresOtp: true,
-        verificationId: (response as any).verificationId,
-      };
-    } catch (err: unknown) {
-      return { success: false, error: mapAuthError(err, "Invalid email or username or password.") };
-    } finally {
-      setIsLoading(false);
+    const result = await dispatch(loginThunk({ email, password }));
+    if (loginThunk.rejected.match(result)) {
+      return { success: false, error: result.payload ?? "Invalid email or username or password." };
     }
+    if (result.payload.requiresOtp) {
+      return { success: true, requiresOtp: true, verificationId: result.payload.verificationId };
+    }
+    return { success: true, requiresOtp: false };
   };
 
   const verifyOtp = async (verificationId: string, otp: string): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
-    try {
-      const response = await verifyOtpApi(verificationId, otp);
-      if (!response.accessToken || !response.user) {
-        return { success: false, error: "Invalid response from server." };
-      }
-      return storeAuthenticatedSession(response);
-    } catch (err: unknown) {
-      return { success: false, error: mapAuthError(err, "Invalid OTP. Please try again.") };
-    } finally {
-      setIsLoading(false);
+    const result = await dispatch(verifyOtpThunk({ verificationId, otp }));
+    if (verifyOtpThunk.rejected.match(result)) {
+      return { success: false, error: result.payload ?? "Invalid OTP. Please try again." };
     }
+    return { success: true };
   };
 
   const resendOtp = async (verificationId: string): Promise<{ success: boolean; message?: string; error?: string }> => {
-    try {
-      const response = await resendOtpApi(verificationId);
-      return { success: true, message: response.message };
-    } catch (err: unknown) {
-      return { success: false, error: mapAuthError(err, "Could not resend OTP. Please try again.") };
+    const result = await dispatch(resendOtpThunk(verificationId));
+    if (resendOtpThunk.rejected.match(result)) {
+      return { success: false, error: result.payload ?? "Could not resend OTP. Please try again." };
     }
+    return { success: true, message: result.payload.message };
   };
 
-  const isAuthenticated = useMemo(() => {
-    return Boolean(token && !isTokenExpired(token) && user?.role?.toUpperCase() === "TRAINER");
-  }, [token, user]);
+  const logout = async () => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+    await dispatch(logoutThunk());
+  };
 
-  const value = useMemo<AuthContextValue>(
-    () => ({
-      user,
-      token,
-      isAuthenticated,
-      isLoading,
-      login,
-      verifyOtp,
-      resendOtp,
-      logout,
-    }),
-    [user, token, isAuthenticated, isLoading]
-  );
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
-  return ctx;
+  return {
+    user,
+    token: accessToken,
+    isAuthenticated,
+    isLoading,
+    isBootstrapping,
+    login,
+    verifyOtp,
+    resendOtp,
+    logout,
+  };
 }

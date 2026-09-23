@@ -34,6 +34,7 @@ import { fetchUsersbyIdApi } from "@/helpers/api/userApi";
 import { getAttendanceByUserIdApi } from "@/helpers/api/attendanceApi";
 import { getTrainerBatchesApi } from "@/services/api";
 import { useTrainerDashboard } from "@/context/TrainerDashboardContext";
+import { useAuth } from "@/context/AuthContext";
 import NoBatchEnrollment from "../SideBar/noBatchEnrollment";
 import PageLoader from "@/components/ui/PageLoader";
 import {
@@ -156,39 +157,23 @@ const Calendar: React.FC = () => {
   const [formEventDate, setFormEventDate] = useState<string>(moment().format("YYYY-MM-DD"));
   const [formDescription, setFormDescription] = useState<string>("");
 
-  // Token & User Auth Helpers
-  const getToken = () =>
-    localStorage.getItem("teqcertify_token") || localStorage.getItem("authToken");
+  // Token & User come from the Redux-backed auth store now — the access
+  // token only ever lives in memory (see src/context/AuthContext.tsx).
+  const { user: currentUser, token: authToken } = useAuth();
+  const getToken = () => authToken;
 
-  const getCurrentUser = () => {
-    try {
-      const stored = localStorage.getItem("teqcertify_user");
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return null;
-  };
-
-  const currentUser = getCurrentUser();
   const roleStr = (
     typeof currentUser?.role === "string"
       ? currentUser.role
-      : typeof currentUser?.roleName === "string"
-      ? currentUser.roleName
+      : typeof (currentUser as any)?.roleName === "string"
+      ? (currentUser as any).roleName
       : ""
   ).toUpperCase();
   const isAdmin = roleStr === "ADMIN";
   const isTrainer = roleStr === "TRAINER";
   const isTrainee = !isAdmin && !isTrainer;
 
-  const getUserId = (): string | null => {
-    const token = getToken();
-    if (token) {
-      const directUserId = localStorage.getItem("userId");
-      if (directUserId) return directUserId;
-      if (currentUser?.id) return currentUser.id;
-    }
-    return null;
-  };
+  const getUserId = (): string | null => (authToken && currentUser?.id) || null;
 
   // Stable date string extractor (avoids timezone shifting for date-only values)
   const toDateString = (val: any): string => {
