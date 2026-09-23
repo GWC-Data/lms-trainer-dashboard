@@ -114,7 +114,6 @@ export default function Login() {
     sessionStorage.removeItem("forgotPasswordSubmitted");
     sessionStorage.removeItem("passwordResetCompleted");
     sessionStorage.removeItem("completedResetToken");
-    sessionStorage.removeItem("trainerEmailCompleted");
     sessionStorage.removeItem("setPasswordCompleted");
     sessionStorage.removeItem("completedInviteToken");
 
@@ -409,23 +408,6 @@ export default function Login() {
                   )}
                 </Button>
 
-                <div className="pt-2 text-center">
-                  <p className="text-xs text-[#8C7A70]">
-                    First time logging in?{" "}
-                    <Link
-                      to="/trainer-email"
-                      replace
-                      onClick={() => {
-                        sessionStorage.removeItem("trainerEmailCompleted");
-                        sessionStorage.removeItem("setPasswordCompleted");
-                        sessionStorage.removeItem("completedInviteToken");
-                      }}
-                      className="font-semibold text-[#DE896A] hover:underline"
-                    >
-                      Activate account
-                    </Link>
-                  </p>
-                </div>
               </form>
             </>
           ) : (

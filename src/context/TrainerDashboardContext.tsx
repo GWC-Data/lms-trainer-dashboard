@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import {
   getTrainerDashboardApi,
   TrainerDashboardData,
@@ -23,32 +23,59 @@ export function TrainerDashboardProvider({ children }: { children: ReactNode }) 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const dashboardDataRef = useRef<TrainerDashboardData | null>(dashboardData);
+  dashboardDataRef.current = dashboardData;
+
   const fetchDashboard = useCallback(async () => {
     if (!isAuthenticated) return;
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await getTrainerDashboardApi();
-      
-      if (res && res.success && res.data) {
-        setDashboardData(res.data);
-      } else {
-        setError(res?.message || "Failed to load dashboard data");
+    if (inFlightRef.current) return inFlightRef.current;
+
+    const promise = (async () => {
+      try {
+        // Only show full loading spinner if there is no data yet
+        if (!dashboardDataRef.current) {
+          setLoading(true);
+        }
+        setError(null);
+        const res = await getTrainerDashboardApi();
+
+        if (res && res.success && res.data) {
+          setDashboardData(res.data);
+        } else {
+          setError(res?.message || "Failed to load dashboard data");
+        }
+      } catch (err: any) {
+        console.error("Dashboard fetch error:", err);
+        setError(
+          err?.response?.data?.message ||
+          err?.message ||
+          "Unable to load trainer dashboard. Please check your network connection."
+        );
+      } finally {
+        setLoading(false);
+        inFlightRef.current = null;
       }
-    } catch (err: any) {
-      console.error("Dashboard fetch error:", err);
-      setError(
-        err?.response?.data?.message ||
-        err?.message ||
-        "Unable to load trainer dashboard. Please check your network connection."
-      );
-    } finally {
-      setLoading(false);
-    }
+    })();
+
+    inFlightRef.current = promise;
+    return promise;
   }, [isAuthenticated]);
 
   useEffect(() => {
     fetchDashboard();
+  }, [fetchDashboard]);
+
+  // Listen for schedule/calendar changes to automatically invalidate and refetch dashboard data
+  useEffect(() => {
+    const handleScheduleUpdate = () => {
+      fetchDashboard();
+    };
+
+    window.addEventListener("lms:schedule-updated", handleScheduleUpdate);
+    return () => {
+      window.removeEventListener("lms:schedule-updated", handleScheduleUpdate);
+    };
   }, [fetchDashboard]);
 
   const traineesNeedingSupport = dashboardData?.traineesNeedingSupport || [];

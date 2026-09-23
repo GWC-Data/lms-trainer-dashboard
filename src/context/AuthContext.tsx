@@ -35,9 +35,10 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function decodeTokenPayload(token: string): { exp?: number } | null {
+function decodeTokenPayload(token: string): { exp?: number; [key: string]: unknown } | null {
   try {
     const parts = token.split(".");
+    if (parts.length !== 3) return null;
     if (parts.length !== 3) return null;
     let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const padLength = (4 - (base64.length % 4)) % 4;
@@ -57,8 +58,9 @@ function decodeTokenPayload(token: string): { exp?: number } | null {
 
     const payload = JSON.parse(jsonPayload);
     if (payload && typeof payload === "object") {
-      return payload as { exp?: number };
+      return payload as { exp?: number; [key: string]: unknown };
     }
+    return null;
     return null;
   } catch {
     return null;
@@ -68,14 +70,14 @@ function decodeTokenPayload(token: string): { exp?: number } | null {
 function isTokenExpired(token: string | null): boolean {
   if (!token) return true;
   const payload = decodeTokenPayload(token);
-  if (!payload?.exp) return true;
+  if (!payload || typeof payload.exp !== "number") return true;
   return Date.now() >= payload.exp * 1000;
 }
 
 // Milliseconds until the token's exp claim, or null if it can't be read.
 function getMsUntilExpiry(token: string): number | null {
   const payload = decodeTokenPayload(token);
-  if (!payload?.exp) return null;
+  if (!payload || typeof payload.exp !== "number") return null;
   return payload.exp * 1000 - Date.now();
 }
 
@@ -178,11 +180,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // verifyOtp() — both receive the same { accessToken, refreshToken, user }
   // shape once tokens actually exist, they just get there via different requests.
   function storeAuthenticatedSession(auth: {
-    accessToken: string;
-    refreshToken: string;
-    user: BackendUser;
+    accessToken?: string;
+    refreshToken?: string;
+    user?: BackendUser;
+    login?: {
+      accessToken?: string;
+      refreshToken?: string;
+      user?: BackendUser;
+    };
   }): { success: boolean; error?: string } {
-    const roleName = auth.user.role?.toUpperCase() || "";
+    const accessToken = auth.login?.accessToken || auth.accessToken;
+    const refreshToken = auth.login?.refreshToken || auth.refreshToken;
+    const user = auth.login?.user || auth.user;
+
+    if (!accessToken || !refreshToken || !user) {
+      return {
+        success: false,
+        error: "Invalid authentication response from server.",
+      };
+    }
+
+    const roleName = user.role?.toUpperCase() || "";
     if (roleName !== "TRAINER") {
       return {
         success: false,
@@ -190,12 +208,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    localStorage.setItem(TOKEN_STORAGE_KEY, auth.accessToken);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, auth.refreshToken);
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(auth.user));
+    localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
+    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
 
-    setToken(auth.accessToken);
-    setUser(auth.user);
+    setToken(accessToken);
+    setUser(user);
     return { success: true };
   }
 
@@ -204,24 +222,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const response = await loginApi(email, password);
 
-      if (!response.requiresOtp) {
-        // This device already verified OTP today — tokens already issued,
-        // no OTP screen needed.
-        const authPayload = response.login || response;
-        if (!authPayload.accessToken || !authPayload.user) {
-          return { success: false, error: "Invalid response from server." };
-        }
-        return storeAuthenticatedSession({
-          accessToken: authPayload.accessToken,
-          refreshToken: authPayload.refreshToken || "",
-          user: authPayload.user,
-        });
+      if (!response.requiresOtp || (response as any).login || (response as any).accessToken) {
+        // Tokens issued — establish authenticated session directly, no OTP screen needed.
+        const stored = storeAuthenticatedSession(response as any);
+        return {
+          ...stored,
+          requiresOtp: false,
+        };
       }
 
       return {
         success: true,
         requiresOtp: true,
-        verificationId: response.verificationId,
+        verificationId: (response as any).verificationId,
       };
     } catch (err: unknown) {
       return { success: false, error: mapAuthError(err, "Invalid email or username or password.") };

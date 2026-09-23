@@ -123,7 +123,10 @@ export default function CourseCard({ courses, getModes, className }: CourseCardP
                     <Clock className="h-3 w-3 text-[#DE896A]" />
                     <span>Next session</span>
                   </div>
-                  <span className="rounded-lg bg-[#FFF8F6] border border-[#F5E2DA] px-2 py-0.5 text-[11px] font-bold text-[#3A2A22]">
+                  <span
+                    className="rounded-lg bg-[#FFF8F6] border border-[#F5E2DA] px-2 py-0.5 text-[11px] font-bold text-[#3A2A22] max-w-full truncate"
+                    title={c.nextSession || "No upcoming session"}
+                  >
                     {c.nextSession || "No upcoming session"}
                   </span>
                 </div>
