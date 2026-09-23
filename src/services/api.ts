@@ -156,11 +156,16 @@ export interface LoginAlreadyVerifiedTodayResponse {
   success: boolean;
   requiresOtp?: boolean;
   message: string;
-  login?: LoginPayload;
-  accessToken: string;
-  refreshToken: string;
-  tokenExpiry: number;
-  user: BackendUser;
+  login?: {
+    accessToken: string;
+    refreshToken: string;
+    tokenExpiry: number;
+    user: BackendUser;
+  };
+  accessToken?: string;
+  refreshToken?: string;
+  tokenExpiry?: number;
+  user?: BackendUser;
 }
 
 export type LoginResponse = LoginOtpRequiredResponse | LoginAlreadyVerifiedTodayResponse;
@@ -369,14 +374,10 @@ export interface DashboardCourse {
   batches: number;
   avgProgress: number;
   nextSession: string | null;
-  nextSessionDate?: string | null;
-  nextSessionTitle?: string | null;
 }
 
 export interface DashboardScheduleItem {
   id: string;
-  courseId?: string;
-  batchId?: string;
   batch: string;
   batchCode?: string;
   date: string;
