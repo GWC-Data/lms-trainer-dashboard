@@ -13,8 +13,6 @@ import ResetPassword from "@/pages/ResetPassword";
 import Dashboard from "@/pages/Dashboard";
 import MyCourses from "@/pages/MyCourses";
 import Modules from "@/pages/content/Modules";
-// import Lessons from "@/pages/content/Lessons"; // Temporarily disabled
-// import Videos from "@/pages/content/Videos"; // Temporarily disabled
 import Documents from "@/pages/content/Documents";
 import Quizzes from "@/pages/Quizzes";
 import Assignments from "@/pages/Assignments";
