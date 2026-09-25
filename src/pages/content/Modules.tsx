@@ -25,11 +25,11 @@ import {
 } from "@/components/ui/Select";
 import {
   getModulesApi,
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerBatchFiltersApi,
+  getTrainerCourseFiltersApi,
   type BackendModuleItem,
-  type BackendBatchItem,
-  type TrainerCourseItem,
+  type BatchFilterItem,
+  type CourseFilterItem,
 } from "@/services/api";
 import AddModuleModal from "@/components/forms/AddModuleModal";
 import { cn } from "@/lib/utils";
@@ -65,8 +65,8 @@ function formatUpdatedDate(dateStr: string | null | undefined): string {
 
 export default function Modules() {
   const [modules, setModules] = useState<BackendModuleItem[]>([]);
-  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BatchFilterItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingRef, setLoadingRef] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +82,7 @@ export default function Modules() {
   const [selectedCourseId, setSelectedCourseId] = useState<string>(urlCourseId || "all");
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Parallel Load: Batches & Courses
+  // 1. Parallel Load: Lightweight Batches & Courses Filters (Once on mount)
   // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -91,37 +91,37 @@ export default function Modules() {
       try {
         setLoadingRef(true);
         const [batchesRes, coursesRes] = await Promise.all([
-          getTrainerBatchesApi().catch((err) => {
-            console.warn("Failed to load trainer batches:", err);
-            return [] as BackendBatchItem[];
+          getTrainerBatchFiltersApi().catch((err) => {
+            console.warn("Failed to load trainer batch filters:", err);
+            return [] as BatchFilterItem[];
           }),
-          getTrainerCoursesApi().catch((err) => {
-            console.warn("Failed to load trainer courses:", err);
-            return { courses: [] as TrainerCourseItem[] };
+          getTrainerCourseFiltersApi().catch((err) => {
+            console.warn("Failed to load trainer course filters:", err);
+            return [] as CourseFilterItem[];
           }),
         ]);
 
         if (!mounted) return;
 
         setBatches(batchesRes);
-        setCourses(coursesRes?.courses || []);
+        setCourses(coursesRes);
 
         // Reconcile initial selections with URL search params
         if (urlBatchId && batchesRes.some((b) => b.id === urlBatchId)) {
           setSelectedBatchId(urlBatchId);
           const found = batchesRes.find((b) => b.id === urlBatchId);
-          const targetCourseId = found?.courseId || found?.course?.id;
+          const targetCourseId = found?.courseId;
           if (targetCourseId) {
             setSelectedCourseId(targetCourseId);
           } else {
             setSelectedCourseId("none");
           }
-        } else if (urlCourseId && (coursesRes?.courses || []).some((c) => c.id === urlCourseId)) {
+        } else if (urlCourseId && coursesRes.some((c) => c.id === urlCourseId)) {
           setSelectedCourseId(urlCourseId);
           setSelectedBatchId("all");
-        } else if (coursesRes?.courses && coursesRes.courses.length > 0 && !urlBatchId && !urlCourseId) {
+        } else if (coursesRes.length > 0 && !urlBatchId && !urlCourseId) {
           // Default to first course if neither is provided
-          setSelectedCourseId(coursesRes.courses[0].id);
+          setSelectedCourseId(coursesRes[0].id);
           setSelectedBatchId("all");
         }
       } catch (err) {
@@ -135,7 +135,7 @@ export default function Modules() {
     return () => {
       mounted = false;
     };
-  }, [urlBatchId, urlCourseId]);
+  }, []);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 2. Canonical Batch → Course Resolution
@@ -147,25 +147,15 @@ export default function Modules() {
 
   const selectedCourse = useMemo(() => {
     if (selectedCourseId === "all" || selectedCourseId === "none") return null;
-    return (
-      courses.find((c) => c.id === selectedCourseId) ||
-      (selectedBatch?.course?.courseName
-        ? {
-            id: selectedCourseId,
-            name: selectedBatch.course.courseName,
-            courseName: selectedBatch.course.courseName,
-          }
-        : null)
-    );
-  }, [courses, selectedCourseId, selectedBatch]);
+    return courses.find((c) => c.id === selectedCourseId) || null;
+  }, [courses, selectedCourseId]);
 
   const batchResolvedCourseName = useMemo(() => {
     if (!selectedBatch) return null;
-    if (selectedBatch.course?.courseName) return cleanDisplayString(selectedBatch.course.courseName);
-    const targetCourseId = selectedBatch.courseId || selectedBatch.course?.id;
+    const targetCourseId = selectedBatch.courseId;
     if (targetCourseId) {
       const match = courses.find((c) => c.id === targetCourseId);
-      if (match?.courseName) return cleanDisplayString(match.courseName);
+      if (match?.name) return cleanDisplayString(match.name);
     }
     return null;
   }, [selectedBatch, courses]);
@@ -225,7 +215,7 @@ export default function Modules() {
       });
     } else {
       const found = batches.find((b) => b.id === newBatchId);
-      const targetCourseId = found?.courseId || found?.course?.id;
+      const targetCourseId = found?.courseId;
       if (targetCourseId) {
         setSelectedCourseId(targetCourseId);
         setSearchParams({ batchId: newBatchId, courseId: targetCourseId });
@@ -272,7 +262,7 @@ export default function Modules() {
   };
 
   const cleanTitle = selectedBatch
-    ? cleanDisplayString(selectedBatch.batchName)
+    ? cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)
     : selectedCourse
     ? cleanDisplayString(selectedCourse.name || (selectedCourse as any).courseName)
     : "All Course Modules";
@@ -280,7 +270,7 @@ export default function Modules() {
   const courseDesc =
     (selectedCourse as any)?.description?.trim() ||
     (selectedBatch
-      ? `Modules assigned to ${cleanDisplayString(selectedBatch.batchName)} · ${batchResolvedCourseName || "No course"}`
+      ? `Modules assigned to ${cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)} · ${batchResolvedCourseName || "No course"}`
       : "Browse modules for your assigned curriculum and manage teaching materials.");
 
   if ((loading || loadingRef) && modules.length === 0) {
@@ -320,7 +310,7 @@ export default function Modules() {
                 <SelectItem value="all">All Batches</SelectItem>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.batchName)}
+                    {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -354,7 +344,7 @@ export default function Modules() {
                     <SelectItem value="all">All Courses</SelectItem>
                     {courses.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {cleanDisplayString(c.name || c.courseName)}
+                        {cleanDisplayString(c.name || (c as any).courseName)}
                       </SelectItem>
                     ))}
                   </>
@@ -401,7 +391,7 @@ export default function Modules() {
               {selectedBatch && (
                 <Badge tone="neutral">
                   <Users className="mr-1 h-3 w-3" />
-                  BATCH: {cleanDisplayString(selectedBatch.batchName)}
+                  BATCH: {cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}
                 </Badge>
               )}
 

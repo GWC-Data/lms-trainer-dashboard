@@ -28,12 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { fetchBatchIdByTraineeIdApi } from "@/helpers/api/batchTraineeApi";
-import { fetchBatchByIdApi } from "@/helpers/api/batchApi";
-import { fetchBatchClassScheduleByBatchIdApi } from "@/helpers/api/batchClassScheduleApi";
-import { fetchUsersbyIdApi } from "@/helpers/api/userApi";
-import { getAttendanceByUserIdApi } from "@/helpers/api/attendanceApi";
-import { getTrainerBatchesApi } from "@/services/api";
-import { useTrainerDashboard } from "@/context/TrainerDashboardContext";
+import { getTrainerBatchFiltersApi, getTrainerScheduleApi } from "@/services/api";
 import NoBatchEnrollment from "../SideBar/noBatchEnrollment";
 import PageLoader from "@/components/ui/PageLoader";
 import {
@@ -43,52 +38,6 @@ import {
   deleteBatchEventApi,
   BatchEvent
 } from "@/services/batchEventApi";
-
-interface CalendarEvent {
-  batchName: string;
-  meetingLink?: string;
-  batchId: string;
-  trainers: string;
-  module: string;
-  startTime: string;
-  endTime: string;
-  classId: string;
-  classDate: Date;
-  classDescription: string;
-  classRecordedLink: string;
-  classTitle: string;
-  isPastEvent?: boolean;
-  attendance?: boolean;
-  startDateScheduledModule?: string;
-  endDateScheduledModule?: string;
-}
-
-interface ClassItem {
-  id: string;
-  classId: string;
-  classDate: string;
-  classDescription: string;
-  classRecordedLink: string;
-  classTitle: string;
-}
-
-interface AssignmentEvent {
-  title: string;
-  start: Date;
-  end: Date;
-  batchId: string;
-  trainer: string;
-  assignmentFile: string;
-  id: string;
-  batchName: string;
-  classId: string;
-  moduleName: string;
-  assignCompletionId?: string;
-  assignmentTraineeId?: string;
-  obtainedPercentage?: string;
-  batchClassScheduleId?: string;
-  totalMarks?: string;
-}
 
 interface BatchFilter {
   id: string;
@@ -116,7 +65,6 @@ interface UnifiedEventItem {
 }
 
 const Calendar: React.FC = () => {
-  const { refreshDashboard } = useTrainerDashboard();
   const navigate = useNavigate();
 
   // Navigation & Date State
@@ -124,9 +72,7 @@ const Calendar: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<moment.Moment>(moment());
 
   // Backend Data State
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [assignments, setAssignments] = useState<AssignmentEvent[]>([]);
-  const [batchEvents, setBatchEvents] = useState<BatchEvent[]>([]);
+  const [scheduleItems, setScheduleItems] = useState<UnifiedEventItem[]>([]);
   const [batchFilters, setBatchFilters] = useState<BatchFilter[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
   const [batchName, setBatchName] = useState<string>("");
@@ -225,28 +171,149 @@ const Calendar: React.FC = () => {
     return String(b1).trim().toLowerCase() === String(b2).trim().toLowerCase();
   };
 
-  // 1. Initial Batch & Class Schedules Load
-  useEffect(() => {
-    fetchBatchesData();
-  }, []);
-
-  // 2. Fetch Real Batch Events from BigQuery when selected batch changes
-  const loadBatchEvents = async (targetBatch?: string) => {
+  // Load unified schedule from backend
+  const loadSchedule = async (targetBatch?: string | null, targetMonth?: moment.Moment) => {
     try {
-      const activeBatch = targetBatch !== undefined ? targetBatch : (selectedBatch || batchId || undefined);
-      const queryBatch = activeBatch === "all" ? undefined : activeBatch;
-      const data = await fetchBatchEventsForTraineeApi(queryBatch);
-      setBatchEvents(data);
+      const m = targetMonth || currentMonth;
+      const startDate = m.clone().startOf("month").format("YYYY-MM-DD");
+      const endDate = m.clone().endOf("month").format("YYYY-MM-DD");
+      const activeBatch = targetBatch !== undefined ? targetBatch : selectedBatch;
+      const bId = activeBatch && activeBatch !== "all" ? activeBatch : undefined;
+
+      if (isTrainer || isAdmin) {
+        const res = await getTrainerScheduleApi({
+          batchId: bId,
+          startDate,
+          endDate,
+        });
+        const rows = res?.data || [];
+        const items: UnifiedEventItem[] = rows.map((r: any) => {
+          const batchObj = batchFilters.find((b) => isSameBatchSafe(b.id, r.batchId));
+          return {
+            id: r.id,
+            category: r.type === "class" ? "class-schedule" : "batch-event",
+            title: r.title,
+            type: r.type || "session",
+            batchName: r.batchName || batchObj?.name || batchName || "Batch",
+            batchId: r.batchId,
+            description: r.description || "",
+            date: r.date,
+            startTime: r.startTime,
+            endTime: r.endTime,
+            meetingLink: r.meetingLink,
+          };
+        });
+        setScheduleItems(items);
+      } else {
+        const data = await fetchBatchEventsForTraineeApi(bId);
+        const items: UnifiedEventItem[] = (data || []).map((be: any) => ({
+          id: be.id || `be-${be.title}-${be.eventDate}`,
+          category: "batch-event",
+          title: be.title,
+          type: be.type || "event",
+          batchName: be.batchName || batchName || "Active Batch",
+          batchId: be.batchId,
+          description: be.description || "",
+          date: be.eventDate,
+        }));
+        setScheduleItems(items);
+      }
     } catch (error) {
-      console.error("Failed to fetch batch events", error);
+      console.error("Failed to load schedule:", error);
     }
   };
 
+  // Initial load: Fetch batches once and initial schedule
   useEffect(() => {
-    if (selectedBatch || batchId) {
-      loadBatchEvents(selectedBatch || batchId || undefined);
-    }
-  }, [selectedBatch, batchId]);
+    let isMounted = true;
+    const init = async () => {
+      setIsLoading(true);
+      try {
+        if (isTrainer || isAdmin) {
+          const trainerBatches = await getTrainerBatchFiltersApi();
+          const filters: BatchFilter[] = (trainerBatches || [])
+            .map((b: any) => ({
+              id: b.id || b.batchId,
+              name: b.name || b.batchName,
+            }))
+            .filter((f: any) => Boolean(f.id && f.name));
+
+          if (!isMounted) return;
+
+          setBatchFilters(filters);
+          const initialBatch = filters.length > 0 ? filters[0].id : "all";
+          setSelectedBatch(initialBatch);
+          setBatchId(initialBatch);
+          setBatchName(filters[0]?.name || "All Batches");
+
+          const startDate = currentMonth.clone().startOf("month").format("YYYY-MM-DD");
+          const endDate = currentMonth.clone().endOf("month").format("YYYY-MM-DD");
+          const res = await getTrainerScheduleApi({
+            batchId: initialBatch !== "all" ? initialBatch : undefined,
+            startDate,
+            endDate,
+          });
+
+          if (!isMounted) return;
+
+          const rows = res?.data || [];
+          const items: UnifiedEventItem[] = rows.map((r: any) => {
+            const batchObj = filters.find((b) => isSameBatchSafe(b.id, r.batchId));
+            return {
+              id: r.id,
+              category: r.type === "class" ? "class-schedule" : "batch-event",
+              title: r.title,
+              type: r.type || "session",
+              batchName: r.batchName || batchObj?.name || "Batch",
+              batchId: r.batchId,
+              description: r.description || "",
+              date: r.date,
+              startTime: r.startTime,
+              endTime: r.endTime,
+              meetingLink: r.meetingLink,
+            };
+          });
+          setScheduleItems(items);
+        } else {
+          const token = getToken();
+          const userId = getUserId();
+          if (!token || !userId) {
+            setIsLoading(false);
+            return;
+          }
+          const batchIds = await fetchBatchIdByTraineeIdApi(String(userId));
+          if (!isMounted) return;
+          if (Array.isArray(batchIds) && batchIds.length > 0) {
+            const firstId = batchIds[0];
+            setSelectedBatch(firstId);
+            setBatchId(firstId);
+            const data = await fetchBatchEventsForTraineeApi(firstId);
+            if (!isMounted) return;
+            const items: UnifiedEventItem[] = (data || []).map((be: any) => ({
+              id: be.id,
+              category: "batch-event",
+              title: be.title,
+              type: be.type || "event",
+              batchName: "Active Batch",
+              batchId: be.batchId,
+              description: be.description || "",
+              date: be.eventDate,
+            }));
+            setScheduleItems(items);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to initialize calendar:", err);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+
+    init();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Keep form date in sync when user picks a date
   useEffect(() => {
@@ -262,193 +329,17 @@ const Calendar: React.FC = () => {
     }
   }, [selectedBatch, batchFilters]);
 
-  const fetchBatchesData = async () => {
-    const token = getToken();
-    const userId = getUserId();
-
-    if (!token || userId === null) {
-      toast.error("You must be logged in to view calendar.");
-      setIsLoading(false);
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      let BatchIds: string[] = [];
-      const batchNameMap: Record<string, string> = {};
-
-      if (isTrainer) {
-        // Scoped to trainer's authorized batches via backend getBatchesForTrainer
-        const trainerBatches = await getTrainerBatchesApi();
-        BatchIds = (trainerBatches || [])
-          .map((b: any) => b.batchId || b.id)
-          .filter((id: any): id is string => Boolean(id));
-        (trainerBatches || []).forEach((b: any) => {
-          const id = b.batchId || b.id;
-          const name = b.batchName || b.name;
-          if (id && name) {
-            batchNameMap[id] = name;
-          }
-        });
-      } else if (isAdmin) {
-        // Admin: all batches
-        const adminBatches = await getTrainerBatchesApi();
-        BatchIds = (adminBatches || [])
-          .map((b: any) => b.batchId || b.id)
-          .filter((id: any): id is string => Boolean(id));
-        (adminBatches || []).forEach((b: any) => {
-          const id = b.batchId || b.id;
-          const name = b.batchName || b.name;
-          if (id && name) {
-            batchNameMap[id] = name;
-          }
-        });
-      } else {
-        // Trainee: use trainee-specific batch enrollment API
-        BatchIds = await fetchBatchIdByTraineeIdApi(String(userId));
-      }
-
-      if (Array.isArray(BatchIds) && BatchIds.length > 0) {
-        setBatchId(BatchIds[0]);
-        setSelectedBatch(BatchIds[0]);
-      } else {
-        setBatchId(null);
-        setSelectedBatch("");
-        setIsLoading(false);
-        return;
-      }
-
-      const attendanceStatus = isTrainee ? await getAttendanceByUserIdApi(String(userId)) : [];
-      const scheduledClassDetails: CalendarEvent[] = [];
-      const assignmentDetails: AssignmentEvent[] = [];
-      const filters: BatchFilter[] = [];
-
-      for (const id of BatchIds) {
-        let bName = batchNameMap[id];
-        if (!bName) {
-          const batchData = await fetchBatchByIdApi(id);
-          bName = batchData?.batchName;
-        }
-        if (!bName) continue;
-
-        filters.push({ id, name: bName });
-
-        if (id === BatchIds[0]) {
-          setBatchName(bName);
-        }
-
-        const scheduledModules = await fetchBatchClassScheduleByBatchIdApi(id);
-
-        if (scheduledModules && Array.isArray(scheduledModules)) {
-          scheduledModules.forEach((scheduledModule: any) => {
-            const moduleStart = moment(scheduledModule.startDate);
-            const moduleEnd = moment(scheduledModule.endDate);
-
-            const currentModuleClasses: ClassItem[] = scheduledModules
-              .filter((mod) => mod.moduleId === scheduledModule.moduleId)
-              .map((mod) => ({
-                classId: mod.classId,
-                classDate: mod.startDate,
-                classDescription: mod.class?.classDescription || "",
-                classRecordedLink: mod.class?.classRecordedLink || "",
-                classTitle: mod.class?.classTitle || "",
-                id: mod.classId,
-              }));
-
-            const loopStart = moduleStart.clone();
-            while (loopStart.isSameOrBefore(moduleEnd)) {
-              const classesForDate = currentModuleClasses.filter((classItem) =>
-                moment(classItem.classDate).isSame(loopStart, "day")
-              );
-
-              classesForDate.forEach((classItem) => {
-                if (loopStart.day() !== 0) {
-                  const attendanceData = attendanceStatus.find(
-                    (att: any) => String(att.classId) === String(classItem.classId)
-                  );
-
-                  let attendance: boolean | undefined = undefined;
-                  if (attendanceData) {
-                    if (typeof attendanceData.attendance === "string") {
-                      const v = attendanceData.attendance.trim().toLowerCase();
-                      attendance = v === "present" || v === "true" || v === "1" || v === "yes";
-                    } else {
-                      attendance = Boolean(attendanceData.attendance);
-                    }
-                  }
-
-                  scheduledClassDetails.push({
-                    batchName: scheduledModule.batch?.batchName || bName,
-                    module: scheduledModule.module?.moduleName || "Module",
-                    startTime: scheduledModule.startTime || "",
-                    endTime: scheduledModule.endTime || "",
-                    startDateScheduledModule: scheduledModule.startDate,
-                    endDateScheduledModule: scheduledModule.endDate,
-                    meetingLink: scheduledModule.meetingLink,
-                    batchId: scheduledModule.batchId || id,
-                    trainers: scheduledModule.trainers
-                      ? scheduledModule.trainers
-                          .map((trainer: any) => `${trainer.firstName || ""} ${trainer.lastName || ""}`.trim())
-                          .filter(Boolean)
-                          .join(", ")
-                      : "No Trainers Assigned",
-                    isPastEvent: moment(loopStart).isBefore(moment(), "day"),
-                    classId: classItem.classId,
-                    classDate: new Date(classItem.classDate),
-                    classDescription: classItem.classDescription,
-                    classRecordedLink: classItem.classRecordedLink,
-                    classTitle: classItem.classTitle,
-                    attendance: attendance,
-                  });
-                }
-              });
-
-              loopStart.add(1, "day");
-            }
-
-            // Assignments from class
-            if (scheduledModule.class && scheduledModule.class.assignmentName) {
-              const assignmentEndDate = scheduledModule.assignmentEndDate
-                ? new Date(scheduledModule.assignmentEndDate)
-                : new Date(scheduledModule.endDate);
-
-              assignmentDetails.push({
-                batchName: scheduledModule.batch?.batchName || bName,
-                id: scheduledModule.id,
-                title: scheduledModule.class.assignmentName,
-                start: new Date(scheduledModule.startDate),
-                end: assignmentEndDate,
-                batchId: scheduledModule.batchId || id,
-                trainer: scheduledModule.trainers?.[0]?.id || "",
-                assignmentFile: scheduledModule.class.assignmentFile,
-                classId: scheduledModule.classId,
-                moduleName: scheduledModule.module?.moduleName || "",
-                batchClassScheduleId: scheduledModule.id,
-                totalMarks: scheduledModule.class.totalMarks || "",
-              });
-            }
-          });
-        }
-      }
-
-      setEvents(scheduledClassDetails);
-      setAssignments(assignmentDetails);
-      setBatchFilters(filters);
-    } catch (error) {
-      console.error("Error loading calendar batch data:", error);
-      toast.error("Failed to load batch calendar data.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   // Month navigation
   const handlePrevMonth = () => {
-    setCurrentMonth((prev) => prev.clone().subtract(1, "month"));
+    const prev = currentMonth.clone().subtract(1, "month");
+    setCurrentMonth(prev);
+    loadSchedule(selectedBatch, prev);
   };
 
   const handleNextMonth = () => {
-    setCurrentMonth((prev) => prev.clone().add(1, "month"));
+    const next = currentMonth.clone().add(1, "month");
+    setCurrentMonth(next);
+    loadSchedule(selectedBatch, next);
   };
 
   // Build grid days for the active month view
@@ -468,115 +359,25 @@ const Calendar: React.FC = () => {
     };
   }, [currentMonth]);
 
-  // Check if a specific date contains ANY real event (Batch Event, Class, Assignment)
+  // Check if a specific date contains ANY real event
   const hasEventsOnDate = (day: moment.Moment): boolean => {
     const activeBatchId = selectedBatch || batchId;
-
-    // 1. Batch Events
-    const hasBatchEvent = batchEvents.some((be) => {
-      const matchesDate = isSameDaySafe(be.eventDate, day);
-      const matchesBatch = isSameBatchSafe(be.batchId, activeBatchId);
+    return scheduleItems.some((item) => {
+      const matchesDate = isSameDaySafe(item.date, day);
+      const matchesBatch = isSameBatchSafe(item.batchId, activeBatchId);
       return matchesDate && matchesBatch;
     });
-    if (hasBatchEvent) return true;
-
-    // 2. Class schedules
-    const hasClass = events.some((ce) => {
-      const matchesDate = isSameDaySafe(ce.classDate, day);
-      const matchesBatch = isSameBatchSafe(ce.batchId, activeBatchId);
-      return matchesDate && matchesBatch && ce.module !== "No Module";
-    });
-    if (hasClass) return true;
-
-    // 3. Assignments
-    const hasAssignment = assignments.some((ae) => {
-      const matchesDate = isSameDaySafe(ae.end, day) || isSameDaySafe(ae.start, day);
-      const matchesBatch = isSameBatchSafe(ae.batchId, activeBatchId);
-      return matchesDate && matchesBatch;
-    });
-
-    return hasAssignment;
   };
 
   // Get all unified events for the currently selected date
   const selectedDayItems = useMemo((): UnifiedEventItem[] => {
     const activeBatchId = selectedBatch || batchId;
-    const items: UnifiedEventItem[] = [];
-
-    // 1. Batch Events (from BigQuery BatchEvent table)
-    batchEvents
-      .filter((be) => {
-        const matchesDate = isSameDaySafe(be.eventDate, selectedDate);
-        const matchesBatch = isSameBatchSafe(be.batchId, activeBatchId);
-        return matchesDate && matchesBatch;
-      })
-      .forEach((be) => {
-        const batchObj = batchFilters.find((b) => isSameBatchSafe(b.id, be.batchId));
-        const displayBatch = be.batchId === "all" ? "All Batches" : (batchObj?.name || batchName || "Active Batch");
-        items.push({
-          id: be.id || `be-${be.title}-${be.eventDate}`,
-          category: "batch-event",
-          title: be.title,
-          type: be.type || "event",
-          batchName: displayBatch,
-          batchId: be.batchId,
-          description: be.description || "",
-          date: be.eventDate,
-        });
-      });
-
-    // 2. Scheduled Classes
-    events
-      .filter((ce) => {
-        const matchesDate = isSameDaySafe(ce.classDate, selectedDate);
-        const matchesBatch = isSameBatchSafe(ce.batchId, activeBatchId);
-        return matchesDate && matchesBatch && ce.module !== "No Module";
-      })
-      .forEach((ce) => {
-        items.push({
-          id: ce.classId || `class-${ce.classTitle}`,
-          category: "class-schedule",
-          title: ce.classTitle || `${ce.module} Session`,
-          type: "Class Session",
-          batchName: ce.batchName || batchName,
-          batchId: ce.batchId,
-          description: ce.classDescription || `Module: ${ce.module}`,
-          date: ce.classDate,
-          startTime: ce.startTime,
-          endTime: ce.endTime,
-          trainers: ce.trainers,
-          meetingLink: ce.meetingLink,
-          classRecordedLink: ce.classRecordedLink,
-          attendance: ce.attendance,
-          moduleName: ce.module,
-        });
-      });
-
-    // 3. Assignments
-    assignments
-      .filter((ae) => {
-        const matchesDate = isSameDaySafe(ae.end, selectedDate) || isSameDaySafe(ae.start, selectedDate);
-        const matchesBatch = isSameBatchSafe(ae.batchId, activeBatchId);
-        return matchesDate && matchesBatch;
-      })
-      .forEach((ae) => {
-        items.push({
-          id: ae.id || `assign-${ae.title}`,
-          category: "assignment",
-          title: ae.title,
-          type: "Assignment",
-          batchName: ae.batchName || batchName,
-          batchId: ae.batchId,
-          description: `Assignment for ${ae.moduleName || "module"}${ae.totalMarks ? ` (${ae.totalMarks} marks)` : ""}`,
-          date: ae.end || ae.start,
-          assignmentFile: ae.assignmentFile,
-          moduleName: ae.moduleName,
-          totalMarks: ae.totalMarks,
-        });
-      });
-
-    return items;
-  }, [selectedDate, batchEvents, events, assignments, selectedBatch, batchId, batchFilters, batchName]);
+    return scheduleItems.filter((item) => {
+      const matchesDate = isSameDaySafe(item.date, selectedDate);
+      const matchesBatch = isSameBatchSafe(item.batchId, activeBatchId);
+      return matchesDate && matchesBatch;
+    });
+  }, [scheduleItems, selectedDate, selectedBatch, batchId]);
 
   // Handle Event Click -> Open Detail Modal
   const handleEventClick = (item: UnifiedEventItem) => {
@@ -630,11 +431,8 @@ const Calendar: React.FC = () => {
           }
         }
 
-        // Immediately refresh real batch events from BigQuery for this batch
-        await loadBatchEvents(targetBatch);
-
-        // Immediately refresh Trainer Dashboard upcoming schedule cache
-        refreshDashboard().catch(console.error);
+        // Immediately refresh real schedule from BigQuery for this batch
+        await loadSchedule(targetBatch, moment(formEventDate));
 
         // Switch calendar selected date to the event date to see it right away
         setSelectedDate(moment(formEventDate));
@@ -713,11 +511,8 @@ const Calendar: React.FC = () => {
           }
         }
 
-        // Refresh batch events from BigQuery
-        await loadBatchEvents(targetBatch);
-
-        // Immediately refresh Trainer Dashboard upcoming schedule cache
-        refreshDashboard().catch(console.error);
+        // Refresh schedule from BigQuery
+        await loadSchedule(targetBatch, moment(editEventDate));
 
         // Switch calendar view to the updated date
         setSelectedDate(moment(editEventDate));
@@ -747,11 +542,8 @@ const Calendar: React.FC = () => {
         setEventToDelete(null);
         setSelectedDetailEvent(null);
 
-        // Immediately refresh real batch events from BigQuery
-        await loadBatchEvents();
-
-        // Immediately refresh Trainer Dashboard upcoming schedule cache
-        refreshDashboard().catch(console.error);
+        // Immediately refresh real schedule from BigQuery
+        await loadSchedule(selectedBatch, currentMonth);
       } else {
         toast.error(res?.message || "Failed to delete event.");
       }
@@ -844,7 +636,7 @@ const Calendar: React.FC = () => {
                       setBatchName(matched.name);
                     }
                   }
-                  loadBatchEvents(val);
+                  loadSchedule(val, currentMonth);
                 }}
               >
                 <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-[#FFFBF9] text-xs sm:text-sm font-medium text-[#233047] shadow-xs hover:border-[#DE896A]/40 focus:ring-[#DE896A]/20">

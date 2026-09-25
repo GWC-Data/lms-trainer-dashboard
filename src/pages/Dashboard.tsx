@@ -22,8 +22,11 @@ export default function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
-    refreshDashboard().catch(console.error);
-  }, [refreshDashboard]);
+    if (!dashboardData) {
+      refreshDashboard();
+    }
+  }, [dashboardData, refreshDashboard]);
+
 
   const trainerFirstName =
     user?.firstName || (user?.email ? user.email.split("@")[0] : "Trainer");
@@ -75,14 +78,11 @@ export default function Dashboard() {
   };
 
   const handleTraineeClick = (trainee: DashboardTraineeSupport) => {
-    navigate("/trainees", {
-      state: {
-        traineeId: trainee.id,
-        search: trainee.name,
-        batchId: trainee.batchId,
-        riskOnly: true,
-      },
-    });
+    const query = trainee.batchId ? `?batchId=${encodeURIComponent(trainee.batchId)}` : "";
+    if (typeof window !== "undefined" && trainee.name) {
+      sessionStorage.setItem(`trainee_name_${trainee.id}`, trainee.name);
+    }
+    navigate(`/trainees/${trainee.id}${query}`, { state: { traineeName: trainee.name } });
   };
 
   if (loading && !dashboardData) {

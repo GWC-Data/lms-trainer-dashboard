@@ -99,7 +99,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
     if (storedToken && storedUser && !isTokenExpired(storedToken)) {
       try {
-        return JSON.parse(storedUser);
+        const parsed = JSON.parse(storedUser);
+        if (!parsed.role && storedToken) {
+          const payload = decodeTokenPayload(storedToken);
+          const jwtUser = (payload?.user as any) || {};
+          parsed.role = (jwtUser.role || jwtUser.roleName || "TRAINER").toUpperCase();
+        }
+        return parsed;
       } catch {
         return null;
       }
@@ -158,6 +164,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // Synchronize state immediately if the Axios response interceptor silently refreshed the token
+  useEffect(() => {
+    const handleTokenRefreshed = (e: any) => {
+      if (e?.detail && typeof e.detail === "string") {
+        setToken(e.detail);
+      }
+    };
+    window.addEventListener("auth:token-refreshed", handleTokenRefreshed);
+    return () => {
+      window.removeEventListener("auth:token-refreshed", handleTokenRefreshed);
+    };
+  }, []);
+
   // The backend already returns a user-facing `message` for every login/OTP
   // failure branch (invalid creds, account not activated, rate-limited,
   // invalid/expired/max-attempts OTP, device limit, resend cooldown, ...) —
@@ -198,7 +217,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const roleName = user.role?.toUpperCase() || "";
+    // Decode JWT payload to verify trainer role authorization safely from the cryptographically signed token
+    const tokenPayload = decodeTokenPayload(accessToken);
+    const jwtUser = (tokenPayload?.user as any) || {};
+    const roleName = ((user as any).role || jwtUser.role || jwtUser.roleName || "").toUpperCase();
     if (roleName !== "TRAINER") {
       return {
         success: false,
@@ -206,12 +228,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
     }
 
+    const sessionUser: User = {
+      ...user,
+      role: roleName,
+    };
+
     localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
     localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(sessionUser));
 
     setToken(accessToken);
-    setUser(user);
+    setUser(sessionUser);
     return { success: true };
   }
 

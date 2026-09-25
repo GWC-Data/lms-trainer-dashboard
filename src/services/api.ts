@@ -85,6 +85,9 @@ async function performTokenRefresh(): Promise<string | null> {
     const { accessToken, refreshToken } = response.data;
     localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
     localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("auth:token-refreshed", { detail: accessToken }));
+    }
     return accessToken;
   } catch {
     return null;
@@ -123,14 +126,36 @@ api.interceptors.response.use(
   }
 );
 
+// Coalesce in-flight concurrent GET requests with identical URL + params
+// to eliminate duplicate network calls (e.g., from React StrictMode double-mounting or multiple widgets)
+const inFlightGetRequests = new Map<string, Promise<any>>();
+
+export function deduplicatedGet<T = any>(url: string, config?: any): Promise<T> {
+  const paramsKey = config?.params ? JSON.stringify(config.params) : "";
+  const key = `${url}?${paramsKey}`;
+
+  if (inFlightGetRequests.has(key)) {
+    return inFlightGetRequests.get(key)!;
+  }
+
+  const promise = api.get<T>(url, config)
+    .then((response) => response.data)
+    .finally(() => {
+      inFlightGetRequests.delete(key);
+    });
+
+  inFlightGetRequests.set(key, promise);
+  return promise;
+}
+
 export interface BackendUser {
   id: string;
   firstName: string;
   lastName: string;
   email: string;
   jobBoardAccess?: string;
-  roleId: string;
-  role: string;
+  roleId?: string;
+  role?: string;
   permissions?: string[];
 }
 
@@ -416,28 +441,17 @@ export interface TrainerDashboardResponse {
 
 /**
  * Real Trainer Dashboard API: GET /api/trainer/dashboard
- * Scoped strictly to authenticated trainer via Bearer JWT.
+ * Scoped strictly to authenticated trainer. Returns KPIs and previews only.
  */
 export async function getTrainerDashboardApi(): Promise<TrainerDashboardResponse> {
-  const response = await api.get<TrainerDashboardResponse>("/api/trainer/dashboard");
-  return response.data;
+  return deduplicatedGet<TrainerDashboardResponse>("/api/trainer/dashboard");
 }
 
 /**
- * Real Forgot Password request: POST /auth/forgot-password
+ * Forgot Password API: POST /auth/forgot-password
  */
-export async function forgotPasswordApi(email: string): Promise<ForgotPasswordResponse> {
-  const response = await api.post<ForgotPasswordResponse>(
-    "/auth/forgot-password",
-    {
-      email: email.trim().toLowerCase(),
-    },
-    {
-      headers: {
-        Authorization: undefined,
-      },
-    }
-  );
+export async function forgotPasswordApi(email: string): Promise<{ success: boolean; message: string }> {
+  const response = await api.post<{ success: boolean; message: string }>("/auth/forgot-password", { email });
   return response.data;
 }
 
@@ -494,11 +508,78 @@ export interface TrainerCourseItem {
   batches: TrainerCourseBatch[];
 }
 
+export interface PaginationMetadata {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}
+
+export interface CourseFilterItem {
+  id: string;
+  name: string;
+}
+
+export interface BatchFilterItem {
+  id: string;
+  name: string;
+  courseId?: string | null;
+  startDate?: string | null;
+}
+
+export interface FilterResponse<T> {
+  success: boolean;
+  statusCode?: number;
+  data: T[];
+}
+
 export interface TrainerCoursesResponse {
   success: boolean;
   statusCode?: number;
   message?: string;
+  data?: TrainerCourseItem[];
   courses: TrainerCourseItem[];
+  pagination?: PaginationMetadata;
+}
+
+/**
+ * Lightweight Course Filter API: GET /api/trainer/filters/courses
+ * Returns only id and name for filter dropdowns.
+ */
+export async function getTrainerCourseFiltersApi(): Promise<CourseFilterItem[]> {
+  const data = await deduplicatedGet<FilterResponse<CourseFilterItem>>("/api/trainer/filters/courses");
+  return data?.data || [];
+}
+
+/**
+ * Lightweight Batch Filter API: GET /api/trainer/filters/batches?courseId=...
+ * Returns only id, name, and courseId for filter dropdowns.
+ */
+export async function getTrainerBatchFiltersApi(courseId?: string): Promise<BatchFilterItem[]> {
+  const data = await deduplicatedGet<FilterResponse<BatchFilterItem>>("/api/trainer/filters/batches", {
+    params: courseId ? { courseId } : undefined
+  });
+  return data?.data || [];
+}
+
+/**
+ * Real Trainer Courses API: GET /api/trainer/courses
+ * Bearer JWT authenticated. Returns courses scoped strictly to the trainer with pagination.
+ */
+export async function getTrainerCoursesApi(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+}): Promise<TrainerCoursesResponse> {
+  const res = await deduplicatedGet<TrainerCoursesResponse>("/api/trainer/courses", {
+    params: params ?? undefined
+  });
+  return {
+    ...res,
+    courses: res?.courses || (res as any)?.data || []
+  };
 }
 
 export interface BackendModuleItem {
@@ -531,15 +612,6 @@ export interface CreateModuleResponse {
   message: string;
   moduleId?: string;
   module?: BackendModuleItem;
-}
-
-/**
- * Real Trainer Courses API: GET /api/trainer/courses
- * Bearer JWT authenticated. Returns courses scoped strictly to the trainer.
- */
-export async function getTrainerCoursesApi(): Promise<TrainerCoursesResponse> {
-  const response = await api.get<TrainerCoursesResponse>("/api/trainer/courses");
-  return response.data;
 }
 
 /**
@@ -709,29 +781,45 @@ export interface BatchesResponse {
   data?: BackendBatchItem[];
 }
 
+export interface TrainerBatchesResponse {
+  success: boolean;
+  statusCode?: number;
+  message?: string;
+  data: BackendBatchItem[];
+  pagination?: PaginationMetadata;
+}
+
 /**
- * Real Batch API: GET /batches
+ * Real Batch API: GET /api/trainer/batches
  * Scoped to trainer's authorized batches/courses via JWT.
  */
-export async function getTrainerBatchesApi(courseId?: string): Promise<BackendBatchItem[]> {
-  const response = await api.get<BatchesResponse>("/batches", {
-    params: courseId ? { courseId } : undefined
+export async function getTrainerBatchesApi(
+  courseId?: string,
+  params?: { page?: number; limit?: number; search?: string }
+): Promise<BackendBatchItem[]> {
+  const queryParams = {
+    ...(params || {}),
+    ...(courseId ? { courseId } : {})
+  };
+  const response = await deduplicatedGet<any>("/api/trainer/batches", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
-  const list = response.data?.batch?.data || response.data?.data || [];
+  const list = response?.data || response?.batch?.data || [];
   return list;
 }
 
-export async function getBatchesForCourseApi(courseId: string): Promise<BackendBatchItem[]> {
-  return getTrainerBatchesApi(courseId);
+export async function getTrainerBatchesPaginatedApi(params?: {
+  courseId?: string;
+  page?: number;
+  limit?: number;
+  search?: string;
+}): Promise<TrainerBatchesResponse> {
+  return deduplicatedGet<TrainerBatchesResponse>("/api/trainer/batches", {
+    params: params ?? undefined
+  });
 }
 
-/**
- * Real Batch Details API: GET /batches/:id
- */
-export async function getBatchDetailsApi(batchId: string): Promise<any> {
-  const response = await api.get<{ message: string; batch: any }>(`/batches/${batchId}`);
-  return response.data?.batch;
-}
+
 
 // ─── Lessons for Module ───────────────────────────────────────────────────────
 
@@ -978,15 +1066,8 @@ export interface QuizResultsResponse {
  */
 export async function getQuizResultsApi(quizId: string): Promise<QuizResultsResponse> {
   const cleanId = quizId.trim();
-  try {
-    const response = await api.get<QuizResultsResponse>(`/quizzes/${encodeURIComponent(cleanId)}/results`);
-    return response.data;
-  } catch (err: any) {
-    const response = await api.get<QuizResultsResponse>("/assessment-results", {
-      params: { assessmentId: cleanId }
-    });
-    return response.data;
-  }
+  const response = await api.get<QuizResultsResponse>(`/quizzes/${encodeURIComponent(cleanId)}/results`);
+  return response.data;
 }
 
 
@@ -1202,8 +1283,15 @@ export interface TraineeListItem {
   courseName: string;
   mode: string;
   progressPct: number;
-  completedLessons: number;
-  totalLessons: number;
+  completedModules: number;
+  totalModules: number;
+  moduleCompletion?: {
+    completed: number;
+    total: number;
+    percentage: number;
+  };
+  completedLessons?: number;
+  totalLessons?: number;
   quizCompleted: number;
   quizAvgScore: number;
   attendancePct: number;
@@ -1218,14 +1306,11 @@ export interface TraineeListItem {
 export interface TraineesApiResponse {
   success: boolean;
   message?: string;
+  pagination?: PaginationMetadata;
+  trainees?: TraineeListItem[];
   data: {
     trainees: TraineeListItem[];
-    pagination: {
-      page: number;
-      limit: number;
-      total: number;
-      totalPages: number;
-    };
+    pagination?: PaginationMetadata;
   };
 }
 
@@ -1235,20 +1320,31 @@ export async function getTraineesApi(params?: {
   search?: string;
   mode?: string;
   atRisk?: boolean;
+  riskOnly?: boolean;
   page?: number;
   limit?: number;
 }): Promise<TraineesApiResponse> {
-  const response = await api.get<any>("/api/trainees", {
-    params: params ?? undefined
+  const queryParams: any = { ...(params || {}) };
+  if (queryParams.riskOnly === undefined && queryParams.atRisk !== undefined) {
+    queryParams.riskOnly = queryParams.atRisk;
+  }
+  const resData = await deduplicatedGet<any>("/api/trainer/trainees", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
-  const resData = response.data;
-  const rawList = resData?.data?.trainees || resData?.trainees || [];
+  const rawList = resData?.data?.trainees || resData?.data || resData?.trainees || [];
   const normalizedList: TraineeListItem[] = rawList.map((t: any) => {
     const fullName = t.name || t.fullName || (t.firstName || t.lastName ? `${t.firstName || ''} ${t.lastName || ''}`.trim() : 'Trainee');
     const bId = t.batchId || t.batch?.batchId || '';
     const bName = t.batchName || t.batch?.batchName || '';
     const cId = t.courseId || t.course?.courseId || '';
     const cName = t.courseName || t.course?.courseName || '';
+    const progressPct = Number(t.progressPct ?? t.moduleCompletion?.percentage ?? t.lessonCompletion?.percentage ?? 0);
+    const totalModules = Number(t.totalModules ?? t.moduleCompletion?.total ?? 0);
+    const completedModules = Number(
+      t.completedModules ??
+      t.moduleCompletion?.completed ??
+      (totalModules > 0 ? Math.round((progressPct / 100) * totalModules) : 0)
+    );
 
     return {
       id: t.id || t.traineeId || '',
@@ -1259,9 +1355,16 @@ export async function getTraineesApi(params?: {
       courseId: cId,
       courseName: cName,
       mode: t.mode || t.batch?.mode || 'online',
-      progressPct: Number(t.progressPct ?? t.lessonCompletion?.percentage ?? 0),
-      completedLessons: Number(t.completedLessons ?? t.lessonCompletion?.completed ?? 0),
-      totalLessons: Number(t.totalLessons ?? t.lessonCompletion?.total ?? 0),
+      progressPct,
+      completedModules,
+      totalModules,
+      moduleCompletion: t.moduleCompletion || {
+        completed: completedModules,
+        total: totalModules,
+        percentage: progressPct
+      },
+      completedLessons: Number(t.completedLessons ?? t.lessonCompletion?.completed ?? completedModules),
+      totalLessons: Number(t.totalLessons ?? t.lessonCompletion?.total ?? totalModules),
       quizCompleted: Number(t.quizCompleted ?? t.quiz?.completed ?? 0),
       quizAvgScore: Number(t.quizAvgScore ?? t.quiz?.averageScore ?? 0),
       attendancePct: Number(t.attendancePct ?? t.attendance?.percentage ?? 0),
@@ -1277,16 +1380,83 @@ export async function getTraineesApi(params?: {
 
   return {
     ...resData,
+    pagination: resData?.pagination,
     data: {
       ...resData?.data,
-      trainees: normalizedList
+      trainees: normalizedList,
+      pagination: resData?.pagination
     }
   };
 }
 
-export async function getTraineeDetailsApi(traineeId: string): Promise<any> {
-  const response = await api.get(`/api/trainees/${traineeId}/details`);
-  return response.data;
+export interface TraineeDetailData {
+  trainee: {
+    id: string;
+    name: string;
+    email: string;
+    status: string;
+  };
+  batch: {
+    id: string;
+    name: string;
+  };
+  course: {
+    id: string;
+    name: string;
+  };
+  progress: {
+    completed: number;
+    total: number;
+    percentage: number;
+  };
+  quiz: {
+    score: number;
+  };
+  attendance: {
+    percentage: number;
+  };
+  risk: {
+    isAtRisk: boolean;
+    reason: string | null;
+  };
+  id?: string;
+  name?: string;
+  email?: string;
+  status?: string;
+  batchId?: string;
+  batchName?: string;
+  courseId?: string;
+  courseName?: string;
+  progressPct?: number;
+  completedModules?: number;
+  totalModules?: number;
+  attendancePct?: number;
+  quizScore?: number;
+  isAtRisk?: boolean;
+  riskReason?: string | null;
+}
+
+export async function getTraineeDetailsApi(traineeId: string, batchId?: string): Promise<{ success: boolean; data?: TraineeDetailData }> {
+  return deduplicatedGet<{ success: boolean; data?: TraineeDetailData }>(`/api/trainer/trainees/${traineeId}`, {
+    params: batchId ? { batchId } : undefined
+  });
+}
+
+/**
+ * Real Trainer Schedule API: GET /api/trainer/schedule
+ */
+export async function getTrainerScheduleApi(params?: {
+  startDate?: string;
+  endDate?: string;
+  batchId?: string;
+  courseId?: string;
+  page?: number;
+  limit?: number;
+}): Promise<any> {
+  const response = await deduplicatedGet<any>("/api/trainer/schedule", {
+    params: params ?? undefined
+  });
+  return response;
 }
 
 // ─── Attendance API ──────────────────────────────────────────────────────────
@@ -1334,19 +1504,37 @@ export async function markAttendanceApi(payload: MarkAttendancePayload): Promise
   return response.data;
 }
 
-export async function getAttendanceByBatchApi(batchId?: string, courseId?: string, date?: string): Promise<any> {
-  const params: Record<string, string> = { limit: "1000" };
-  if (batchId && batchId !== "all") {
-    params.batchId = batchId;
-  }
-  if (courseId && courseId !== "all" && courseId !== "none") {
-    params.courseId = courseId;
-  }
-  if (date && date !== "all") {
-    params.attendanceDate = date;
-  }
-  const response = await api.get<any>("/attendance", { params });
-  return response.data;
+
+export interface TrainerAttendanceItem {
+  id?: string | null;
+  traineeId: string;
+  traineeName: string;
+  email?: string | null;
+  batchId: string;
+  batchName: string;
+  courseName: string;
+  date: string;
+  status: "present" | "absent" | "late" | null;
+  percentage?: number | null;
+}
+
+export async function getTrainerAttendanceApi(params?: {
+  batchId?: string;
+  courseId?: string;
+  date?: string;
+  page?: number;
+  limit?: number;
+}): Promise<TrainerAttendanceItem[]> {
+  const queryParams: Record<string, string | number> = {};
+  if (params?.batchId && params.batchId !== "all") queryParams.batchId = params.batchId;
+  if (params?.courseId && params.courseId !== "all" && params.courseId !== "none") queryParams.courseId = params.courseId;
+  if (params?.date && params.date !== "all") queryParams.date = params.date;
+  if (params?.page) queryParams.page = params.page;
+  if (params?.limit) queryParams.limit = params.limit;
+  const res = await deduplicatedGet<any>("/api/trainer/attendance", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
+  });
+  return res?.data || [];
 }
 
 export * from "./batchEventApi";

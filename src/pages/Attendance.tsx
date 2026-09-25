@@ -22,18 +22,15 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Input } from "@/components/ui/Input";
 import { RadialProgress, ProgressBar } from "@/components/ui/ProgressBar";
 import {
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
-  getTraineesApi,
+  getTrainerBatchFiltersApi,
+  getTrainerCourseFiltersApi,
+  getTrainerAttendanceApi,
   bulkSaveAttendanceApi,
   markAttendanceApi,
-  getAttendanceByBatchApi,
-  type BackendBatchItem,
-  type TrainerCourseItem,
-  type TraineeListItem,
+  type BatchFilterItem,
+  type CourseFilterItem,
+  type TrainerAttendanceItem,
 } from "@/services/api";
-import { fetchBatchClassScheduleByBatchIdApi } from "@/helpers/api/batchClassScheduleApi";
-import { fetchBatchEventsForTraineeApi, type BatchEvent } from "@/services/batchEventApi";
 import {
   Select,
   SelectContent,
@@ -76,11 +73,7 @@ function bqStr(val: unknown): string {
 }
 
 /**
- * Local calendar date as YYYY-MM-DD. `.toISOString()` converts to UTC first, which
- * rolls the date back a day for anyone east of UTC during their early-morning hours
- * (e.g. IST 12:00am-5:30am) — attendance saved "for today" would then be stored
- * under yesterday's UTC date, making it look like it never saved once the local
- * clock (and this function, computed fresh) crossed into the next UTC day.
+ * Local calendar date as YYYY-MM-DD.
  */
 function localDateStr(d: Date = new Date()): string {
   const year = d.getFullYear();
@@ -109,8 +102,8 @@ export default function Attendance() {
   const requestedBatchId = (location.state as { batchId?: string } | null)?.batchId;
 
   // Reference data from BigQuery / APIs
-  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BatchFilterItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   // Filter state
@@ -126,8 +119,7 @@ export default function Attendance() {
   const [finalized, setFinalized] = useState<Record<string, boolean>>({});
   const [savingRowKey, setSavingRowKey] = useState<string | null>(null);
 
-  // Selected register date — defaults to today; picking an earlier date shows
-  // that day's attendance (read-only) across the selected batch(es).
+  // Selected register date
   const todayStr = localDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const isToday = selectedDate === todayStr;
@@ -136,12 +128,8 @@ export default function Attendance() {
   // Track whether the selected batch (or any authorized batch) has an actual session on selectedDate
   const [hasSessionForSelectedDate, setHasSessionForSelectedDate] = useState<boolean>(true);
 
-  // In-memory cache for batch class schedules and batch events to avoid repeated API requests
-  const scheduleCacheRef = useRef<Map<string, any[]>>(new Map());
-  const eventsCacheRef = useRef<Map<string, BatchEvent[]>>(new Map());
-
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Parallel Initial Load: Batches & Courses
+  // 1. Parallel Initial Load: Lightweight Batches & Courses Filters
   // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -150,26 +138,26 @@ export default function Attendance() {
       try {
         setLoadingInitial(true);
         const [batchesRes, coursesRes] = await Promise.all([
-          getTrainerBatchesApi().catch((err) => {
-            console.warn("Failed to load trainer batches:", err);
-            return [] as BackendBatchItem[];
+          getTrainerBatchFiltersApi().catch((err) => {
+            console.warn("Failed to load trainer batch filters:", err);
+            return [] as BatchFilterItem[];
           }),
-          getTrainerCoursesApi().catch((err) => {
-            console.warn("Failed to load trainer courses:", err);
-            return { courses: [] as TrainerCourseItem[] };
+          getTrainerCourseFiltersApi().catch((err) => {
+            console.warn("Failed to load trainer course filters:", err);
+            return [] as CourseFilterItem[];
           }),
         ]);
 
         if (!mounted) return;
 
         setBatches(batchesRes);
-        setCourses(coursesRes?.courses || []);
+        setCourses(coursesRes);
 
         // Resolve initial selection from requestedBatchId or default to "all"
         if (requestedBatchId && batchesRes.some((b) => b.id === requestedBatchId)) {
           setSelectedBatchId(requestedBatchId);
           const foundBatch = batchesRes.find((b) => b.id === requestedBatchId);
-          const targetCourseId = foundBatch?.courseId || foundBatch?.course?.id;
+          const targetCourseId = foundBatch?.courseId;
           if (targetCourseId) {
             setSelectedCourseId(targetCourseId);
           } else {
@@ -203,251 +191,64 @@ export default function Attendance() {
 
   const selectedCourse = useMemo(() => {
     if (selectedCourseId === "all" || selectedCourseId === "none") return null;
-    return (
-      courses.find((c) => (c.id || (c as any).courseId) === selectedCourseId) ||
-      (selectedBatch?.course?.courseName
-        ? {
-            id: selectedCourseId,
-            courseName: selectedBatch.course.courseName,
-          }
-        : null)
-    );
-  }, [courses, selectedCourseId, selectedBatch]);
+    return courses.find((c) => c.id === selectedCourseId) || null;
+  }, [courses, selectedCourseId]);
 
   const batchResolvedCourseName = useMemo(() => {
     if (!selectedBatch) return null;
-    const directCourseName = selectedBatch.course?.courseName;
-    if (directCourseName) return cleanDisplayString(directCourseName);
-    const targetCourseId = selectedBatch.courseId || selectedBatch.course?.id;
+    const targetCourseId = selectedBatch.courseId;
     if (targetCourseId) {
-      const match = courses.find((c) => (c.id || (c as any).courseId) === targetCourseId);
-      if (match?.courseName) return cleanDisplayString(match.courseName);
+      const match = courses.find((c) => c.id === targetCourseId);
+      if (match?.name) return cleanDisplayString(match.name);
     }
     return null;
   }, [selectedBatch, courses]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 3. Fetch Roster & Existing Attendance for Current Filter
+  // 3. Fetch Roster & Existing Attendance via Canonical API
   // ─────────────────────────────────────────────────────────────────────────────
-  const getBatchSchedulesAndEvents = useCallback(async (bId: string) => {
-    let schedules = scheduleCacheRef.current.get(bId);
-    if (!schedules) {
-      try {
-        schedules = await fetchBatchClassScheduleByBatchIdApi(bId);
-        scheduleCacheRef.current.set(bId, Array.isArray(schedules) ? schedules : []);
-      } catch {
-        schedules = [];
-        scheduleCacheRef.current.set(bId, []);
-      }
-    }
-
-    let events = eventsCacheRef.current.get(bId);
-    if (!events) {
-      try {
-        events = await fetchBatchEventsForTraineeApi(bId);
-        eventsCacheRef.current.set(bId, Array.isArray(events) ? events : []);
-      } catch {
-        events = [];
-        eventsCacheRef.current.set(bId, []);
-      }
-    }
-
-    return {
-      schedules: schedules || [],
-      events: events || [],
-    };
-  }, []);
-
-  const checkBatchSessionForDate = useCallback(
-    (
-      bId: string,
-      targetDate: string,
-      schedules: any[],
-      events: BatchEvent[],
-      attList: any[]
-    ) => {
-      // 1. Real historical attendance records for this batch on targetDate
-      const hasRecordedAttendance = attList.some((rec) => {
-        const recBatchId = rec.batchId || "";
-        const recDate = rec.sessionDate || (rec.createdAt ? String(rec.createdAt).split("T")[0] : "");
-        return recBatchId === bId && recDate === targetDate;
-      });
-
-      // 2. Class schedule in batchClassSchedules
-      const hasClassSchedule = schedules.some((sch) => {
-        if (!sch) return false;
-        const start = sch.startDate ? String(sch.startDate).split("T")[0] : "";
-        const end = sch.endDate ? String(sch.endDate).split("T")[0] : start;
-        if (!start) return false;
-        return targetDate >= start && targetDate <= end;
-      });
-
-      // 3. Batch event for this batch on targetDate (excluding holidays)
-      const hasBatchEvent = events.some((evt) => {
-        if (!evt || !evt.eventDate) return false;
-        const evtDate = String(evt.eventDate).split("T")[0];
-        if (evtDate !== targetDate) return false;
-        const type = String(evt.type || "").toLowerCase();
-        if (type === "holiday") return false;
-        return true;
-      });
-
-      return hasRecordedAttendance || hasClassSchedule || hasBatchEvent;
-    },
-    []
-  );
-
   const fetchRosterData = useCallback(
-    async (batchId: string, courseId: string, currentBatches: BackendBatchItem[], dateStr: string) => {
+    async (batchId: string, courseId: string, dateStr: string) => {
       try {
         setLoadingRoster(true);
 
-        const params: { batchId?: string; courseId?: string; limit?: number } = { limit: 1000 };
-        if (batchId !== "all") {
-          params.batchId = batchId;
-        } else if (courseId !== "all" && courseId !== "none") {
-          params.courseId = courseId;
-        }
+        const attItems: TrainerAttendanceItem[] = await getTrainerAttendanceApi({
+          batchId: batchId !== "all" ? batchId : undefined,
+          courseId: courseId !== "all" && courseId !== "none" ? courseId : undefined,
+          date: dateStr,
+        });
 
-        const [traineesRes, attRes] = await Promise.all([
-          getTraineesApi(params),
-          getAttendanceByBatchApi(
-            batchId !== "all" ? batchId : undefined,
-            courseId !== "all" && courseId !== "none" ? courseId : undefined,
-            dateStr
-          ).catch(() => null),
-        ]);
-
-        const list: TraineeListItem[] = traineesRes.data?.trainees || [];
-        const attList: any[] = attRes?.attendance?.data || attRes?.attendance || [];
-
-        // Determine which authorized batches had an actual session/class on dateStr
-        const targetBatches = batchId !== "all"
-          ? currentBatches.filter((b) => b.id === batchId)
-          : currentBatches;
-
-        const batchSessionResults = await Promise.all(
-          targetBatches.map(async (b) => {
-            const { schedules, events } = await getBatchSchedulesAndEvents(b.id);
-            const hasSession = checkBatchSessionForDate(b.id, dateStr, schedules, events, attList);
-            return { batchId: b.id, hasSession };
-          })
-        );
-
-        const batchesWithSession = new Set(
-          batchSessionResults.filter((r) => r.hasSession).map((r) => r.batchId)
-        );
-
-        const currentScopeHasSession = batchId !== "all"
-          ? batchesWithSession.has(batchId)
-          : batchesWithSession.size > 0;
-
-        setHasSessionForSelectedDate(currentScopeHasSession);
-
-        // Build the selected date's existing attendance map strictly for batches with active sessions
-        const attMap = new Map<string, { status: AttendanceStatus; remark: string }>();
-        let hasRecordForDate = false;
-
-        // Status priority for multi-batch resolution: P > L > A
-        const statusPriority: Record<AttendanceStatus, number> = { P: 3, L: 2, A: 1 };
-
-        if (currentScopeHasSession) {
-          for (const rec of attList) {
-            const recDate = rec.sessionDate || (rec.createdAt ? String(rec.createdAt).split("T")[0] : "");
-            if (recDate === dateStr) {
-              const recBatchId = rec.batchId || "";
-              // Only batches that actually had a session on dateStr contribute attendance
-              if (recBatchId && !batchesWithSession.has(recBatchId)) {
-                continue;
-              }
-
-              hasRecordForDate = true;
-              const s = String(rec.status || rec.attendance || "").toLowerCase();
-              let st: AttendanceStatus = "P";
-              if (s === "absent") st = "A";
-              else if (s === "late") st = "L";
-
-              // Always store the batch-specific key
-              if (rec.userId && recBatchId) {
-                attMap.set(`${rec.userId}_${recBatchId}`, { status: st, remark: rec.remark || "" });
-              }
-
-              // For the userId-only key, keep highest-priority status across active batches
-              if (rec.userId) {
-                const existingByUser = attMap.get(rec.userId);
-                if (!existingByUser || statusPriority[st] > statusPriority[existingByUser.status]) {
-                  attMap.set(rec.userId, { status: st, remark: rec.remark || "" });
-                }
-              }
-            }
-          }
-        }
+        // If today, or if records exist, or trainees found, allow taking/viewing attendance
+        const hasAnyRecords = attItems.some((r) => Boolean(r.status));
+        setHasSessionForSelectedDate(isToday || hasAnyRecords || attItems.length > 0);
 
         const finalizedKey = batchId !== "all" ? `${batchId}_${dateStr}` : null;
         if (finalizedKey) {
-          setFinalized((prev) => ({ ...prev, [finalizedKey]: hasRecordForDate }));
+          setFinalized((prev) => ({ ...prev, [finalizedKey]: hasAnyRecords }));
         }
 
-        // Deduplicate trainees by unique trainee user ID:
-        // A trainee enrolled in multiple batches must count as ONE unique trainee user.
-        const uniqueTraineeMap = new Map<string, TraineeListItem>();
-        for (const t of list) {
-          const tId = t.id || (t as any).traineeId;
-          if (!tId) continue;
-          if (!uniqueTraineeMap.has(tId)) {
-            uniqueTraineeMap.set(tId, { ...t, id: tId });
-          } else {
-            // Aggregate batch names for display in multi-batch scenarios
-            const existing = uniqueTraineeMap.get(tId)!;
-            const currentBName = t.batchName || currentBatches.find((b) => b.id === t.batchId)?.batchName;
-            if (currentBName && existing.batchName && !existing.batchName.includes(currentBName)) {
-              existing.batchName = `${existing.batchName}, ${currentBName}`;
-            }
-          }
-        }
-        const uniqueList = Array.from(uniqueTraineeMap.values());
-
-        const newRoster: RosterEntry[] = uniqueList.map((t) => {
-          const displayName = t.name || (t as any).fullName || "Trainee";
+        const newRoster: RosterEntry[] = attItems.map((item) => {
+          const displayName = item.traineeName || "Trainee";
           const initials = getInitials(displayName);
-          const bId = t.batchId || (batchId !== "all" ? batchId : "");
-          const parentBatch = currentBatches.find((b) => b.id === bId);
-          const bName = cleanDisplayString(t.batchName || parentBatch?.batchName || "Batch");
-          const cName = cleanDisplayString(
-            t.courseName || (t as any).course?.courseName || parentBatch?.course?.courseName || "General Course"
-          );
+          const bName = cleanDisplayString(item.batchName || "Batch");
+          const cName = cleanDisplayString(item.courseName || "General Course");
 
-          // Check if this trainee's batch had a session on the selected date
-          const traineeBatchHasSession = bId ? batchesWithSession.has(bId) : currentScopeHasSession;
+          let status: AttendanceStatus | undefined = undefined;
+          if (item.status === "present") status = "P";
+          else if (item.status === "absent") status = "A";
+          else if (item.status === "late") status = "L";
 
-          // If no session existed for this batch on dateStr, trainee has NO record and NO status
-          if (!traineeBatchHasSession) {
-            return {
-              traineeId: t.id,
-              batchId: bId,
-              batchName: bName,
-              courseName: cName,
-              name: cleanDisplayString(displayName),
-              email: t.email || "",
-              initials,
-              status: undefined,
-              remark: "",
-              hasRecord: false,
-            };
-          }
-
-          const existing = attMap.get(`${t.id}_${bId}`) || attMap.get(t.id);
           return {
-            traineeId: t.id,
-            batchId: bId,
+            traineeId: item.traineeId,
+            batchId: item.batchId,
             batchName: bName,
             courseName: cName,
             name: cleanDisplayString(displayName),
-            email: t.email || "",
+            email: item.email || "",
             initials,
-            status: existing ? existing.status : undefined,
-            remark: existing?.remark || "",
-            hasRecord: Boolean(existing),
+            status,
+            remark: "",
+            hasRecord: Boolean(item.status),
           };
         });
 
@@ -460,15 +261,15 @@ export default function Attendance() {
         setLoadingRoster(false);
       }
     },
-    [getBatchSchedulesAndEvents, checkBatchSessionForDate]
+    [isToday]
   );
 
   useEffect(() => {
     if (!loadingInitial) {
-      fetchRosterData(selectedBatchId, selectedCourseId, batches, selectedDate);
+      fetchRosterData(selectedBatchId, selectedCourseId, selectedDate);
       setPage(0);
     }
-  }, [selectedBatchId, selectedCourseId, selectedDate, loadingInitial, batches, fetchRosterData]);
+  }, [selectedBatchId, selectedCourseId, selectedDate, loadingInitial, fetchRosterData]);
 
   const handleDateChange = (newDate: string) => {
     if (!newDate) return;
@@ -487,7 +288,7 @@ export default function Attendance() {
       setSelectedCourseId("all");
     } else {
       const foundBatch = batches.find((b) => b.id === newBatchId);
-      const targetCourseId = foundBatch?.courseId || foundBatch?.course?.id;
+      const targetCourseId = foundBatch?.courseId;
       if (targetCourseId) {
         setSelectedCourseId(targetCourseId);
       } else {
@@ -548,7 +349,7 @@ export default function Attendance() {
       return;
     }
     const targetBatch = batches.find((b) => b.id === targetBatchId);
-    const courseId = targetBatch?.course?.id || targetBatch?.courseId || undefined;
+    const courseId = targetBatch?.courseId || undefined;
 
     setSavingRowKey(rowKey);
     markAttendanceApi({
@@ -607,7 +408,7 @@ export default function Attendance() {
 
     try {
       setSaving(true);
-      const courseId = selectedBatch.course?.id || selectedBatch.courseId || "";
+      const courseId = selectedBatch.courseId || "";
       const statusMap: Record<AttendanceStatus, "present" | "absent" | "late"> = {
         P: "present",
         A: "absent",
@@ -629,9 +430,9 @@ export default function Attendance() {
 
       await bulkSaveAttendanceApi(payload);
       setFinalized((prev) => ({ ...prev, [`${selectedBatch.id}_${selectedDate}`]: true }));
-      toast.success(`Register saved for ${cleanDisplayString(selectedBatch.batchName)}`);
+      toast.success(`Register saved for ${cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}`);
       // Refresh saved attendance
-      fetchRosterData(selectedBatch.id, selectedCourseId, batches, selectedDate);
+      fetchRosterData(selectedBatch.id, selectedCourseId, selectedDate);
     } catch (err: any) {
       console.error("Failed to save attendance:", err);
       const msg = err?.response?.data?.message || err?.message || "Failed to save attendance.";
@@ -753,7 +554,7 @@ export default function Attendance() {
                 <SelectItem value="all">All Batches</SelectItem>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.batchName)}
+                    {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -787,7 +588,7 @@ export default function Attendance() {
                     <SelectItem value="all">All Courses</SelectItem>
                     {courses.map((c) => (
                       <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
-                        {cleanDisplayString(c.courseName)}
+                        {cleanDisplayString(c.name || (c as any).courseName)}
                       </SelectItem>
                     ))}
                   </>
@@ -827,7 +628,7 @@ export default function Attendance() {
             <Badge tone="orange">ATTENDANCE</Badge>
             {selectedBatch ? (
               <>
-                <Badge tone="neutral">BATCH: {cleanDisplayString(selectedBatch.batchName)}</Badge>
+                <Badge tone="neutral">BATCH: {cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}</Badge>
                 {batchResolvedCourseName ? (
                   <Badge tone="neutral">COURSE: {cleanDisplayString(batchResolvedCourseName)}</Badge>
                 ) : (
@@ -835,7 +636,7 @@ export default function Attendance() {
                 )}
               </>
             ) : selectedCourse ? (
-              <Badge tone="neutral">COURSE: {cleanDisplayString(selectedCourse.courseName)}</Badge>
+              <Badge tone="neutral">COURSE: {cleanDisplayString(selectedCourse.name || (selectedCourse as any).courseName)}</Badge>
             ) : (
               <Badge tone="neutral">ALL AUTHORIZED BATCHES</Badge>
             )}
@@ -845,9 +646,9 @@ export default function Attendance() {
             <div>
               <h2 className="text-2xl font-bold text-[#3A2A22]">
                 {selectedBatch
-                  ? cleanDisplayString(selectedBatch.batchName)
+                  ? cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)
                   : selectedCourse
-                  ? cleanDisplayString(selectedCourse.courseName)
+                  ? cleanDisplayString(selectedCourse.name || (selectedCourse as any).courseName)
                   : "Attendance Overview"}
               </h2>
               <p className="mt-1 text-sm font-medium text-[#DE896A]">
@@ -955,7 +756,7 @@ export default function Attendance() {
                 <h2 className="text-base font-semibold text-[#3A2A22]">Attendance Register</h2>
                 <p className="text-xs text-[#8C7A70]">
                   {selectedBatch
-                    ? `Batch: ${cleanDisplayString(selectedBatch.batchName)}`
+                    ? `Batch: ${cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}`
                     : "All authorized trainees"}
                 </p>
               </div>
@@ -982,7 +783,7 @@ export default function Attendance() {
                 <span className="font-medium">
                   {isAllSelected
                     ? "No class scheduled for this date across authorized batches."
-                    : `No class scheduled for this date for ${cleanDisplayString(selectedBatch?.batchName)}.`}
+                    : `No class scheduled for this date for ${cleanDisplayString(selectedBatch?.name || (selectedBatch as any)?.batchName)}.`}
                 </span>
               </div>
             )}
@@ -1174,7 +975,7 @@ export default function Attendance() {
               <p className="mt-1 text-sm font-medium text-white/90">
                 {isAllSelected
                   ? "Overall Attendance Rate"
-                  : `Attendance Rate — ${cleanDisplayString(selectedBatch?.batchName)}`}
+                  : `Attendance Rate — ${cleanDisplayString(selectedBatch?.name || (selectedBatch as any)?.batchName)}`}
               </p>
 
               <div className="my-5 flex justify-center">
@@ -1222,7 +1023,7 @@ export default function Attendance() {
               <h3 className="text-sm font-bold uppercase tracking-wider text-[#3A2A22]">
                 {isAllSelected
                   ? "All Authorized Batches"
-                  : `Batch Details — ${cleanDisplayString(selectedBatch?.batchName)}`}
+                  : `Batch Details — ${cleanDisplayString(selectedBatch?.name || (selectedBatch as any)?.batchName)}`}
               </h3>
             </div>
             <CardContent className="space-y-4 p-5 text-xs">
@@ -1289,11 +1090,11 @@ export default function Attendance() {
                       {counts.late} <span className="text-[11px] font-normal text-amber-600/80">({latePercentage}%)</span>
                     </span>
                   </div>
-                  {selectedBatch?.startDate && (
+                  {(selectedBatch as any)?.startDate && (
                     <div className="flex items-center justify-between py-1">
                       <span className="font-semibold text-[#8C7A70]">Batch Start Date</span>
                       <span className="font-bold text-[#3A2A22]">
-                        {bqStr(selectedBatch.startDate)}
+                        {bqStr((selectedBatch as any).startDate)}
                       </span>
                     </div>
                   )}

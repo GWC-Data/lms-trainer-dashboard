@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import FileDropzone, { formatFileSize } from "@/components/ui/FileDropzone";
-import { courses } from "@/data/mockData";
+import { getTrainerCourseFiltersApi, CourseFilterItem } from "@/services/api";
 import { useContent } from "@/context/ContentContext";
 
 interface UploadVideoModalProps {
@@ -40,6 +40,7 @@ function formatDuration(totalSeconds: number): string {
 
 export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }: UploadVideoModalProps) {
   const { addVideo } = useContent();
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [selected, setSelected] = useState<SelectedFile | null>(null);
   const [duration, setDuration] = useState<string | null>(null);
   const [fileError, setFileError] = useState("");
@@ -52,12 +53,28 @@ export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }
     watch,
     formState: { errors },
   } = useForm<FormValues>({
-    defaultValues: { title: "", courseId: defaultCourseId ?? courses[0]?.id ?? "" },
+    defaultValues: { title: "", courseId: defaultCourseId ?? "" },
   });
 
   useEffect(() => {
+    let isMounted = true;
+    getTrainerCourseFiltersApi()
+      .then((data) => {
+        if (!isMounted || !Array.isArray(data)) return;
+        setCourses(data);
+        if (!defaultCourseId && data.length > 0) {
+          setValue("courseId", data[0].id);
+        }
+      })
+      .catch((err) => console.error("Failed to load courses:", err));
+    return () => {
+      isMounted = false;
+    };
+  }, [defaultCourseId, setValue]);
+
+  useEffect(() => {
     if (open) {
-      reset({ title: "", courseId: defaultCourseId ?? courses[0]?.id ?? "" });
+      reset({ title: "", courseId: defaultCourseId ?? (courses[0]?.id || "") });
       setSelected((prev) => {
         if (prev) URL.revokeObjectURL(prev.url);
         return null;
@@ -66,7 +83,7 @@ export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }
       setFileError("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, defaultCourseId]);
+  }, [open, defaultCourseId, courses]);
 
   function handleFileSelected(file: File) {
     setSelected((prev) => {
@@ -141,7 +158,7 @@ export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }
               <SelectContent>
                 {courses.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {c.name} — {c.level}
+                    {c.name}
                   </SelectItem>
                 ))}
               </SelectContent>

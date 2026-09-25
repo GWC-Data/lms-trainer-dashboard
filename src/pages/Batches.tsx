@@ -26,9 +26,9 @@ import {
 } from "@/components/ui/Select";
 import {
   getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerCourseFiltersApi,
   BackendBatchItem,
-  TrainerCourseItem,
+  CourseFilterItem,
 } from "@/services/api";
 
 function formatDate(dateStr?: string | null): string {
@@ -58,7 +58,7 @@ function cleanDisplayString(str?: string | null): string {
 export default function Batches() {
   const navigate = useNavigate();
   const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,21 +67,22 @@ export default function Batches() {
   const [selectedCourseFilter, setSelectedCourseFilter] = useState("all");
   const [selectedModeFilter, setSelectedModeFilter] = useState("all");
 
+  // Load course filter options once
+  useEffect(() => {
+    getTrainerCourseFiltersApi()
+      .then((coursesRes) => {
+        setCourses(Array.isArray(coursesRes) ? coursesRes : []);
+      })
+      .catch((err) => console.error("Failed to load course filters:", err));
+  }, []);
+
   const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
-      const [batchesRes, coursesRes] = await Promise.all([
-        getTrainerBatchesApi(),
-        getTrainerCoursesApi().catch(() => ({ success: true, courses: [] })),
-      ]);
-
+      const courseIdParam = selectedCourseFilter !== "all" ? selectedCourseFilter : undefined;
+      const batchesRes = await getTrainerBatchesApi(courseIdParam);
       setBatches(Array.isArray(batchesRes) ? batchesRes : []);
-      if (coursesRes.success && Array.isArray(coursesRes.courses)) {
-        setCourses(coursesRes.courses);
-      } else {
-        setCourses([]);
-      }
     } catch (err: any) {
       console.error("Failed to load batches:", err);
       setError(err?.response?.data?.message || "Failed to load batches. Please try again.");
@@ -92,11 +93,11 @@ export default function Batches() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [selectedCourseFilter]);
 
   // Map courses by ID for quick resolution
   const courseMap = useMemo(() => {
-    const map = new Map<string, TrainerCourseItem>();
+    const map = new Map<string, CourseFilterItem>();
     courses.forEach((c) => {
       if (c.id) map.set(c.id, c);
     });
@@ -295,7 +296,7 @@ export default function Batches() {
                 ? {
                     id: b.courseId,
                     courseName: courseMap.get(b.courseId)!.name,
-                    courseDesc: courseMap.get(b.courseId)!.description,
+                    courseDesc: "",
                   }
                 : null;
 
