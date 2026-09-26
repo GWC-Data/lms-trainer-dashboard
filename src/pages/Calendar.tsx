@@ -28,7 +28,8 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { fetchBatchIdByTraineeIdApi } from "@/helpers/api/batchTraineeApi";
-import { getTrainerFiltersApi, getTrainerScheduleApi } from "@/services/api";
+import { getTrainerBatchFiltersApi, getTrainerScheduleApi } from "@/services/api";
+import { useAuth } from "@/context/AuthContext";
 import NoBatchEnrollment from "../SideBar/noBatchEnrollment";
 import PageLoader from "@/components/ui/PageLoader";
 import {
@@ -102,39 +103,23 @@ const Calendar: React.FC = () => {
   const [formEventDate, setFormEventDate] = useState<string>(moment().format("YYYY-MM-DD"));
   const [formDescription, setFormDescription] = useState<string>("");
 
-  // Token & User Auth Helpers
-  const getToken = () =>
-    localStorage.getItem("teqcertify_token") || localStorage.getItem("authToken");
+  // Token & User come from the Redux-backed auth store now — the access
+  // token only ever lives in memory (see src/context/AuthContext.tsx).
+  const { user: currentUser, token: authToken } = useAuth();
+  const getToken = () => authToken;
 
-  const getCurrentUser = () => {
-    try {
-      const stored = localStorage.getItem("teqcertify_user");
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return null;
-  };
-
-  const currentUser = getCurrentUser();
   const roleStr = (
     typeof currentUser?.role === "string"
       ? currentUser.role
-      : typeof currentUser?.roleName === "string"
-      ? currentUser.roleName
-      : ""
+      : typeof (currentUser as any)?.roleName === "string"
+        ? (currentUser as any).roleName
+        : ""
   ).toUpperCase();
   const isAdmin = roleStr === "ADMIN";
   const isTrainer = roleStr === "TRAINER";
   const isTrainee = !isAdmin && !isTrainer;
 
-  const getUserId = (): string | null => {
-    const token = getToken();
-    if (token) {
-      const directUserId = localStorage.getItem("userId");
-      if (directUserId) return directUserId;
-      if (currentUser?.id) return currentUser.id;
-    }
-    return null;
-  };
+  const getUserId = (): string | null => (authToken && currentUser?.id) || null;
 
   // Stable date string extractor (avoids timezone shifting for date-only values)
   const toDateString = (val: any): string => {
@@ -725,11 +710,10 @@ const Calendar: React.FC = () => {
                     className="relative flex flex-col items-center justify-center h-10 group focus:outline-none cursor-pointer"
                   >
                     <span
-                      className={`w-9 h-9 flex items-center justify-center rounded-full text-sm font-medium transition-all ${
-                        isSelected
+                      className={`w-9 h-9 flex items-center justify-center rounded-full text-sm font-medium transition-all ${isSelected
                           ? "bg-white text-gray-900 font-bold border border-gray-200/80 shadow-xs"
                           : "text-gray-700 hover:bg-white/60"
-                      }`}
+                        }`}
                     >
                       {dayMoment.format("D")}
                     </span>
@@ -865,11 +849,10 @@ const Calendar: React.FC = () => {
 
                       {item.attendance !== undefined && (
                         <span
-                          className={`px-2 py-0.5 rounded-md font-medium text-xs ${
-                            item.attendance
+                          className={`px-2 py-0.5 rounded-md font-medium text-xs ${item.attendance
                               ? "bg-emerald-50 text-emerald-700"
                               : "bg-rose-50 text-rose-700"
-                          }`}
+                            }`}
                         >
                           {item.attendance ? "Present" : "Absent"}
                         </span>
@@ -955,11 +938,10 @@ const Calendar: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <span className="text-gray-500 font-medium">Attendance</span>
                     <span
-                      className={`font-semibold px-2 py-0.5 rounded text-xs ${
-                        selectedDetailEvent.attendance
+                      className={`font-semibold px-2 py-0.5 rounded text-xs ${selectedDetailEvent.attendance
                           ? "bg-emerald-100 text-emerald-800"
                           : "bg-rose-100 text-rose-800"
-                      }`}
+                        }`}
                     >
                       {selectedDetailEvent.attendance ? "Present" : "Absent"}
                     </span>
