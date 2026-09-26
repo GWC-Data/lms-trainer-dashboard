@@ -159,18 +159,41 @@ export default function MyCourses() {
     fetchCourses();
   }, []);
 
-  // Compute all unique batches across all courses for the filter dropdown
-  const allBatches = useMemo(() => {
+  // Compute available batches across courses for the filter dropdown based on selected course
+  const availableBatches = useMemo(() => {
     const map = new Map<string, { id: string; name: string }>();
     courses.forEach((c) => {
-      (c.batches || []).forEach((b) => {
-        if (b.id && !map.has(b.id)) {
-          map.set(b.id, { id: b.id, name: b.label || b.name || "Batch" });
-        }
-      });
+      if (selectedCourseFilter === "all" || c.id === selectedCourseFilter) {
+        (c.batches || []).forEach((b) => {
+          if (b.id && !map.has(b.id)) {
+            map.set(b.id, { id: b.id, name: b.label || b.name || "Batch" });
+          }
+        });
+      }
     });
     return Array.from(map.values());
-  }, [courses]);
+  }, [courses, selectedCourseFilter]);
+
+  const handleCourseChange = (newCourseId: string) => {
+    setSelectedCourseFilter(newCourseId);
+    if (newCourseId !== "all" && selectedBatchFilter !== "all") {
+      const targetCourse = courses.find((c) => c.id === newCourseId);
+      const batchExists = (targetCourse?.batches || []).some((b) => b.id === selectedBatchFilter);
+      if (!batchExists) {
+        setSelectedBatchFilter("all");
+      }
+    }
+  };
+
+  const handleBatchChange = (newBatchId: string) => {
+    setSelectedBatchFilter(newBatchId);
+    if (newBatchId !== "all") {
+      const parentCourse = courses.find((c) => (c.batches || []).some((b) => b.id === newBatchId));
+      if (parentCourse) {
+        setSelectedCourseFilter(parentCourse.id);
+      }
+    }
+  };
 
   // Filtered courses based on search query, course filter, and batch filter
   const filteredCourses = useMemo(() => {
@@ -248,7 +271,7 @@ export default function MyCourses() {
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Course Filter */}
           <div className="w-[180px]">
-            <Select value={selectedCourseFilter} onValueChange={setSelectedCourseFilter}>
+            <Select value={selectedCourseFilter} onValueChange={handleCourseChange}>
               <SelectTrigger className="h-9 rounded-xl border-[#F0EAE6] bg-[#FFFBF9] text-xs font-medium text-[#233047] hover:border-[#DE896A]/40 focus:ring-[#DE896A]/20">
                 <SelectValue placeholder="Filter by Course" />
               </SelectTrigger>
@@ -265,13 +288,13 @@ export default function MyCourses() {
 
           {/* Batch Filter */}
           <div className="w-[180px]">
-            <Select value={selectedBatchFilter} onValueChange={setSelectedBatchFilter}>
+            <Select value={selectedBatchFilter} onValueChange={handleBatchChange}>
               <SelectTrigger className="h-9 rounded-xl border-[#F0EAE6] bg-[#FFFBF9] text-xs font-medium text-[#233047] hover:border-[#DE896A]/40 focus:ring-[#DE896A]/20">
                 <SelectValue placeholder="Filter by Batch" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Batches ({allBatches.length})</SelectItem>
-                {allBatches.map((b) => (
+                <SelectItem value="all">All Batches ({availableBatches.length})</SelectItem>
+                {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
                     {b.name}
                   </SelectItem>

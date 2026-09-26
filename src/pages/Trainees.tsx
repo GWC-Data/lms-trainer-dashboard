@@ -20,8 +20,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import Button from "@/components/ui/Button";
 import {
-  getTrainerBatchFiltersApi,
-  getTrainerCourseFiltersApi,
+  getTrainerFiltersApi,
   getTraineesApi,
   getTraineeDetailsApi,
   type BatchFilterItem,
@@ -139,10 +138,7 @@ export default function Trainees() {
     async function loadSelectors() {
       try {
         setLoadingSelectors(true);
-        const [courseFilters, batchFilters] = await Promise.all([
-          getTrainerCourseFiltersApi(),
-          getTrainerBatchFiltersApi(),
-        ]);
+        const { courses: courseFilters, batches: batchFilters } = await getTrainerFiltersApi();
         if (!mounted) return;
         setCourses(courseFilters || []);
         setBatches(batchFilters || []);

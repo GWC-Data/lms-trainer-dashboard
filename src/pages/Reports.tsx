@@ -15,11 +15,10 @@ import { TrendingUp, Users2, CalendarX2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { RadialProgress } from "@/components/ui/ProgressBar";
 import {
-  getTrainerCoursesApi,
-  getTrainerBatchesApi,
+  getTrainerFiltersApi,
   getTraineesApi,
-  type TrainerCourseItem,
-  type BackendBatchItem,
+  type CourseFilterItem,
+  type BatchFilterItem,
   type TraineeListItem,
 } from "@/services/api";
 import {
@@ -49,8 +48,8 @@ const STATUS_COLORS: Record<string, string> = {
 const ALL_BATCHES = "all";
 
 export default function Reports() {
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
-  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
+  const [batches, setBatches] = useState<BatchFilterItem[]>([]);
   const [loadingSelectors, setLoadingSelectors] = useState(true);
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>("");
@@ -58,22 +57,17 @@ export default function Reports() {
   const [trainees, setTrainees] = useState<TraineeListItem[]>([]);
   const [loadingTrainees, setLoadingTrainees] = useState(false);
 
-  // 1. Fetch real batches and real courses from BigQuery
+  // 1. Fetch real batches and real courses from cached trainer filters
   useEffect(() => {
     let mounted = true;
     async function loadData() {
       try {
         setLoadingSelectors(true);
-        const [cRes, bData] = await Promise.all([
-          getTrainerCoursesApi(),
-          getTrainerBatchesApi(),
-        ]);
+        const { courses: cList, batches: bList } = await getTrainerFiltersApi();
         if (!mounted) return;
-        const cList = cRes.courses || [];
-        const bList = bData || [];
-        setCourses(cList);
-        setBatches(bList);
-        if (bList.length > 0) {
+        setCourses(cList || []);
+        setBatches(bList || []);
+        if (bList && bList.length > 0) {
           setSelectedBatchId(bList[0].id);
         }
       } catch (err) {
@@ -93,7 +87,7 @@ export default function Reports() {
     [batches, selectedBatchId]
   );
 
-  const targetCourseId = selectedBatch?.courseId || selectedBatch?.course?.id || "";
+  const targetCourseId = selectedBatch?.courseId || "";
 
   const selectedCourse = useMemo(
     () => courses.find((c) => c.id === targetCourseId),
@@ -101,9 +95,8 @@ export default function Reports() {
   );
 
   const courseDisplayName =
-    selectedCourse?.courseName ||
     selectedCourse?.name ||
-    selectedBatch?.course?.courseName ||
+    (selectedCourse as any)?.courseName ||
     (targetCourseId ? "Associated Course" : "No course found for this batch");
 
   // 2. Fetch real trainees in scope of selected Batch + resolved Course
@@ -196,7 +189,7 @@ export default function Reports() {
               <SelectContent>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.batchName)}
+                    {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -235,7 +228,7 @@ export default function Reports() {
                   <span className="text-3xl font-bold text-[#3A2A22]">{avgCompletion}%</span>
                 </div>
                 <p className="mt-2 text-xs text-[#B7A79D]">
-                  {selectedBatch ? selectedBatch.batchName : "In selected batch"}
+                  {selectedBatch ? (selectedBatch.name || (selectedBatch as any).batchName) : "In selected batch"}
                 </p>
               </CardContent>
             </Card>
@@ -260,11 +253,11 @@ export default function Reports() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-[#8C7A70]">Course Domains</span>
                   <span className="text-xs font-semibold text-[#8C7A70]">
-                    {selectedCourse?.domains || 0} Modules
+                    {(selectedCourse as any)?.domains || 0} Modules
                   </span>
                 </div>
                 <div className="mt-3 flex items-baseline gap-2">
-                  <span className="text-3xl font-bold text-[#3A2A22]">{selectedCourse?.hours || 0}h</span>
+                  <span className="text-3xl font-bold text-[#3A2A22]">{(selectedCourse as any)?.hours || 0}h</span>
                 </div>
                 <p className="mt-2 text-xs text-[#B7A79D]">
                   Total estimated duration

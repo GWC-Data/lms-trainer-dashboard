@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Upload, PlayCircle, Clock, HardDrive } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
-import { getTrainerCourseFiltersApi } from "@/services/api";
+import { getTrainerFiltersApi } from "@/services/api";
 import { useContent } from "@/context/ContentContext";
 import UploadVideoModal from "@/components/forms/UploadVideoModal";
 import type { VideoAsset } from "@/types";
@@ -15,8 +15,8 @@ export default function Videos() {
 
   useEffect(() => {
     let isMounted = true;
-    getTrainerCourseFiltersApi()
-      .then((courses) => {
+    getTrainerFiltersApi()
+      .then(({ courses }) => {
         if (!isMounted || !Array.isArray(courses)) return;
         const map: Record<string, string> = {};
         courses.forEach((c) => {

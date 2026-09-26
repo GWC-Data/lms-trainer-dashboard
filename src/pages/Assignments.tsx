@@ -40,14 +40,13 @@ import {
 import AddAssignmentModal from "@/components/forms/AddAssignmentModal";
 import {
   getAssignmentsApi,
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerFiltersApi,
   getAssignmentSubmissionsApi,
   scoreAssignmentSubmissionApi,
   type AssignmentItem,
   type AssignmentSubmissionItem,
-  type BackendBatchItem,
-  type TrainerCourseItem,
+  type BatchFilterItem,
+  type CourseFilterItem,
 } from "@/services/api";
 import { cn } from "@/lib/utils";
 
@@ -83,8 +82,8 @@ function formatDate(dateStr?: string): string {
 export default function Assignments() {
   // Reference data
   const [assignments, setAssignments] = useState<AssignmentItem[]>([]);
-  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BatchFilterItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
 
   // Page state
   const [loading, setLoading] = useState(true);
@@ -116,30 +115,31 @@ export default function Assignments() {
   // Ref to detail view for smooth scrolling on card click
   const detailRef = useRef<HTMLDivElement>(null);
 
+  const isMountedRef = useRef(true);
+
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Initial Parallel Load: Assignments, Batches, Courses
+  // 1. Initial Parallel Load: Assignments & Trainer Filters
   // ─────────────────────────────────────────────────────────────────────────────
   const loadInitialData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const [assignmentsRes, batchesRes, coursesRes] = await Promise.all([
+      const [assignmentsRes, filtersRes] = await Promise.all([
         getAssignmentsApi(),
-        getTrainerBatchesApi().catch((err) => {
-          console.warn("Failed to load trainer batches:", err);
-          return [] as BackendBatchItem[];
-        }),
-        getTrainerCoursesApi().catch((err) => {
-          console.warn("Failed to load trainer courses:", err);
-          return { courses: [] as TrainerCourseItem[] };
+        getTrainerFiltersApi().catch((err) => {
+          console.warn("Failed to load trainer filters:", err);
+          return { courses: [] as CourseFilterItem[], batches: [] as BatchFilterItem[] };
         }),
       ]);
 
+      if (!isMountedRef.current) return;
+
       setAssignments(assignmentsRes);
-      setBatches(batchesRes);
-      setCourses(coursesRes?.courses || []);
+      setBatches(filtersRes.batches || []);
+      setCourses(filtersRes.courses || []);
     } catch (err: any) {
+      if (!isMountedRef.current) return;
       console.error("Failed to load assignments or reference data:", err);
       const status = err?.response?.status || 500;
       const msg = err?.response?.data?.message || err?.message || "Failed to load assignments.";
@@ -150,16 +150,22 @@ export default function Assignments() {
         toast.error("Failed to load assignments.");
       }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     loadInitialData();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, [loadInitialData]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 2. Canonical Batch → Course Resolution
+  // 2. Canonical Batch → Course Resolution & Local Filter Dependency
   // ─────────────────────────────────────────────────────────────────────────────
   const selectedBatch = useMemo(() => {
     if (selectedBatchId === "ALL") return null;
@@ -169,21 +175,21 @@ export default function Assignments() {
   // Derived course from the selected batch
   const batchResolvedCourseId = useMemo(() => {
     if (!selectedBatch) return null;
-    return selectedBatch.courseId || selectedBatch.course?.id || null;
+    return selectedBatch.courseId || (selectedBatch as any).course?.id || null;
   }, [selectedBatch]);
 
   const batchResolvedCourse = useMemo(() => {
     if (!batchResolvedCourseId) return null;
     return (
-      courses.find((c) => (c.id || (c as any).courseId) === batchResolvedCourseId) ||
-      (selectedBatch?.course?.courseName
-        ? {
-            id: batchResolvedCourseId,
-            courseName: selectedBatch.course.courseName,
-          }
-        : null)
+      courses.find((c) => (c.id || (c as any).courseId) === batchResolvedCourseId) || null
     );
-  }, [batchResolvedCourseId, courses, selectedBatch]);
+  }, [batchResolvedCourseId, courses]);
+
+  // Dynamically filter available batches by selected course locally
+  const availableBatches = useMemo(() => {
+    if (selectedCourseId === "ALL" || !selectedCourseId) return batches;
+    return batches.filter((b) => b.courseId === selectedCourseId);
+  }, [batches, selectedCourseId]);
 
   const batchHasNoCourse = Boolean(selectedBatch && !batchResolvedCourseId);
 
@@ -197,11 +203,9 @@ export default function Assignments() {
       // Keep course as ALL or current
     } else {
       const foundBatch = batches.find((b) => b.id === newBatchId);
-      const targetCourseId = foundBatch?.courseId || foundBatch?.course?.id;
+      const targetCourseId = foundBatch?.courseId;
       if (targetCourseId) {
         setSelectedCourseId(targetCourseId);
-      } else {
-        setSelectedCourseId("");
       }
     }
   };
@@ -213,8 +217,11 @@ export default function Assignments() {
     setCardPage(0);
 
     // If a batch is selected and doesn't belong to this course, reset batch
-    if (selectedBatchId !== "ALL" && batchResolvedCourseId && batchResolvedCourseId !== newCourseId) {
-      setSelectedBatchId("ALL");
+    if (newCourseId !== "ALL" && selectedBatchId !== "ALL") {
+      const currentBatch = batches.find((b) => b.id === selectedBatchId);
+      if (currentBatch && currentBatch.courseId && currentBatch.courseId !== newCourseId) {
+        setSelectedBatchId("ALL");
+      }
     }
   };
 
@@ -459,9 +466,9 @@ export default function Assignments() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All Batches</SelectItem>
-                {batches.map((b) => (
+                {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.batchName)}
+                    {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -473,7 +480,6 @@ export default function Assignments() {
             <Select
               value={selectedCourseId || "ALL"}
               onValueChange={handleCourseChange}
-              disabled={Boolean(selectedBatchId !== "ALL" && batchResolvedCourseId)}
             >
               <SelectTrigger className="h-10 text-xs">
                 <SelectValue placeholder="All Courses" />
@@ -482,7 +488,7 @@ export default function Assignments() {
                 <SelectItem value="ALL">All Courses</SelectItem>
                 {courses.map((c) => (
                   <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
-                    {cleanDisplayString(c.courseName || (c as any).name)}
+                    {cleanDisplayString(c.name || (c as any).courseName)}
                   </SelectItem>
                 ))}
               </SelectContent>

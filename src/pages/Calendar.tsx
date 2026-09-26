@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { fetchBatchIdByTraineeIdApi } from "@/helpers/api/batchTraineeApi";
-import { getTrainerBatchFiltersApi, getTrainerScheduleApi } from "@/services/api";
+import { getTrainerFiltersApi, getTrainerScheduleApi } from "@/services/api";
 import NoBatchEnrollment from "../SideBar/noBatchEnrollment";
 import PageLoader from "@/components/ui/PageLoader";
 import {
@@ -230,7 +230,7 @@ const Calendar: React.FC = () => {
       setIsLoading(true);
       try {
         if (isTrainer || isAdmin) {
-          const trainerBatches = await getTrainerBatchFiltersApi();
+          const { batches: trainerBatches } = await getTrainerFiltersApi();
           const filters: BatchFilter[] = (trainerBatches || [])
             .map((b: any) => ({
               id: b.id || b.batchId,

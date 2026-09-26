@@ -520,13 +520,32 @@ export interface PaginationMetadata {
 export interface CourseFilterItem {
   id: string;
   name: string;
+  courseId?: string;
+  courseName?: string;
 }
 
 export interface BatchFilterItem {
   id: string;
   name: string;
+  batchId?: string;
+  batchName?: string;
   courseId?: string | null;
+  courseName?: string | null;
   startDate?: string | null;
+}
+
+export interface TrainerFiltersData {
+  courses: CourseFilterItem[];
+  batches: BatchFilterItem[];
+}
+
+export type TrainerFilterCourseItem = CourseFilterItem;
+export type TrainerFilterBatchItem = BatchFilterItem;
+
+export interface TrainerFiltersResponse {
+  success: boolean;
+  statusCode?: number;
+  data: TrainerFiltersData;
 }
 
 export interface FilterResponse<T> {
@@ -544,24 +563,62 @@ export interface TrainerCoursesResponse {
   pagination?: PaginationMetadata;
 }
 
+// In-memory cache for trainer filters to ensure only 1 request per session across all pages
+let cachedTrainerFilters: TrainerFiltersData | null = null;
+let trainerFiltersInFlight: Promise<TrainerFiltersData> | null = null;
+
+/**
+ * Combined Trainer Filter API: GET /api/trainer/filters
+ * Returns courses and batches together in a single request.
+ * Cached in memory so changing routes/filters never triggers repeated API requests.
+ */
+export async function getTrainerFiltersApi(forceRefresh = false): Promise<TrainerFiltersData> {
+  if (!forceRefresh && cachedTrainerFilters) {
+    return cachedTrainerFilters;
+  }
+  if (!forceRefresh && trainerFiltersInFlight) {
+    return trainerFiltersInFlight;
+  }
+
+  trainerFiltersInFlight = deduplicatedGet<TrainerFiltersResponse>("/api/trainer/filters")
+    .then((res) => {
+      const data = res?.data || { courses: [], batches: [] };
+      cachedTrainerFilters = data;
+      trainerFiltersInFlight = null;
+      return data;
+    })
+    .catch((err) => {
+      trainerFiltersInFlight = null;
+      throw err;
+    });
+
+  return trainerFiltersInFlight;
+}
+
+export function clearTrainerFiltersCache(): void {
+  cachedTrainerFilters = null;
+  trainerFiltersInFlight = null;
+}
+
 /**
  * Lightweight Course Filter API: GET /api/trainer/filters/courses
- * Returns only id and name for filter dropdowns.
+ * Reuses the combined filter API to avoid redundant network calls.
  */
 export async function getTrainerCourseFiltersApi(): Promise<CourseFilterItem[]> {
-  const data = await deduplicatedGet<FilterResponse<CourseFilterItem>>("/api/trainer/filters/courses");
-  return data?.data || [];
+  const data = await getTrainerFiltersApi();
+  return data.courses;
 }
 
 /**
  * Lightweight Batch Filter API: GET /api/trainer/filters/batches?courseId=...
- * Returns only id, name, and courseId for filter dropdowns.
+ * Reuses the combined filter API with local courseId filtering to eliminate redundant network requests.
  */
 export async function getTrainerBatchFiltersApi(courseId?: string): Promise<BatchFilterItem[]> {
-  const data = await deduplicatedGet<FilterResponse<BatchFilterItem>>("/api/trainer/filters/batches", {
-    params: courseId ? { courseId } : undefined
-  });
-  return data?.data || [];
+  const data = await getTrainerFiltersApi();
+  if (courseId && courseId !== "all" && courseId !== "ALL") {
+    return data.batches.filter((b) => b.courseId === courseId);
+  }
+  return data.batches;
 }
 
 /**
@@ -769,6 +826,7 @@ export interface BackendBatchItem {
     courseImg?: string | null;
     courseLink?: string | null;
   } | null;
+  traineeCount?: number;
   trainees?: any[];
 }
 
@@ -1194,18 +1252,18 @@ export async function getAssignmentsApi(params?: {
   courseId?: string;
   batchId?: string;
 }): Promise<AssignmentItem[]> {
-  const response = await api.get<AssignmentsResponse>("/assignments", {
+  const data = await deduplicatedGet<AssignmentsResponse>("/assignments", {
     params: params ?? undefined
   });
-  return response.data?.assignments || [];
+  return data?.assignments || [];
 }
 
 /**
  * Real Single Assignment API: GET /assignments/:id
  */
 export async function getAssignmentByIdApi(id: string): Promise<AssignmentItem | null> {
-  const response = await api.get<{ success: boolean; assignment: AssignmentItem }>(`/assignments/${id}`);
-  return response.data?.assignment || null;
+  const data = await deduplicatedGet<{ success: boolean; assignment: AssignmentItem }>(`/assignments/${id}`);
+  return data?.assignment || null;
 }
 
 /**
@@ -1228,8 +1286,8 @@ export async function deleteAssignmentApi(id: string): Promise<{ success: boolea
  * Real Assignment Submissions API: GET /assignments/:assignmentId/submissions
  */
 export async function getAssignmentSubmissionsApi(assignmentId: string): Promise<AssignmentSubmissionItem[]> {
-  const response = await api.get<SubmissionsResponse>(`/assignments/${assignmentId}/submissions`);
-  return response.data?.submissions || [];
+  const data = await deduplicatedGet<SubmissionsResponse>(`/assignments/${assignmentId}/submissions`);
+  return data?.submissions || [];
 }
 
 /**
@@ -1444,14 +1502,13 @@ export async function getTraineeDetailsApi(traineeId: string, batchId?: string):
 
 /**
  * Real Trainer Schedule API: GET /api/trainer/schedule
+ * Unpaginated date-range based fetching.
  */
 export async function getTrainerScheduleApi(params?: {
   startDate?: string;
   endDate?: string;
   batchId?: string;
   courseId?: string;
-  page?: number;
-  limit?: number;
 }): Promise<any> {
   const response = await deduplicatedGet<any>("/api/trainer/schedule", {
     params: params ?? undefined

@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/Select";
 import {
   getTrainerBatchesApi,
-  getTrainerCourseFiltersApi,
+  getTrainerFiltersApi,
   BackendBatchItem,
   CourseFilterItem,
 } from "@/services/api";
@@ -69,8 +69,8 @@ export default function Batches() {
 
   // Load course filter options once
   useEffect(() => {
-    getTrainerCourseFiltersApi()
-      .then((coursesRes) => {
+    getTrainerFiltersApi()
+      .then(({ courses: coursesRes }) => {
         setCourses(Array.isArray(coursesRes) ? coursesRes : []);
       })
       .catch((err) => console.error("Failed to load course filters:", err));
@@ -303,7 +303,12 @@ export default function Batches() {
             const courseName = resolvedCourse?.courseName || null;
             const courseDesc = resolvedCourse?.courseDesc || null;
             const isOnline = (b.deliveryMode || "online").toLowerCase() === "online";
-            const traineeCount = Array.isArray(b.trainees) ? b.trainees.length : 0;
+            const traineeCount =
+              typeof b.traineeCount === "number"
+                ? b.traineeCount
+                : Array.isArray(b.trainees)
+                ? b.trainees.length
+                : 0;
 
             return (
               <div

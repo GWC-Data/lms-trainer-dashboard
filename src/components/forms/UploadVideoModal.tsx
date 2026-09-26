@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import FileDropzone, { formatFileSize } from "@/components/ui/FileDropzone";
-import { getTrainerCourseFiltersApi, CourseFilterItem } from "@/services/api";
+import { getTrainerFiltersApi, CourseFilterItem } from "@/services/api";
 import { useContent } from "@/context/ContentContext";
 
 interface UploadVideoModalProps {
@@ -58,8 +58,8 @@ export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }
 
   useEffect(() => {
     let isMounted = true;
-    getTrainerCourseFiltersApi()
-      .then((data) => {
+    getTrainerFiltersApi()
+      .then(({ courses: data }) => {
         if (!isMounted || !Array.isArray(data)) return;
         setCourses(data);
         if (!defaultCourseId && data.length > 0) {

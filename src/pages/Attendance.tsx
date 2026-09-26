@@ -22,8 +22,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Input } from "@/components/ui/Input";
 import { RadialProgress, ProgressBar } from "@/components/ui/ProgressBar";
 import {
-  getTrainerBatchFiltersApi,
-  getTrainerCourseFiltersApi,
+  getTrainerFiltersApi,
   getTrainerAttendanceApi,
   bulkSaveAttendanceApi,
   markAttendanceApi,
@@ -137,16 +136,10 @@ export default function Attendance() {
     async function loadInitialData() {
       try {
         setLoadingInitial(true);
-        const [batchesRes, coursesRes] = await Promise.all([
-          getTrainerBatchFiltersApi().catch((err) => {
-            console.warn("Failed to load trainer batch filters:", err);
-            return [] as BatchFilterItem[];
-          }),
-          getTrainerCourseFiltersApi().catch((err) => {
-            console.warn("Failed to load trainer course filters:", err);
-            return [] as CourseFilterItem[];
-          }),
-        ]);
+        const { courses: coursesRes, batches: batchesRes } = await getTrainerFiltersApi().catch((err) => {
+          console.warn("Failed to load trainer filters:", err);
+          return { courses: [] as CourseFilterItem[], batches: [] as BatchFilterItem[] };
+        });
 
         if (!mounted) return;
 
@@ -193,6 +186,14 @@ export default function Attendance() {
     if (selectedCourseId === "all" || selectedCourseId === "none") return null;
     return courses.find((c) => c.id === selectedCourseId) || null;
   }, [courses, selectedCourseId]);
+
+  // Dynamically filter available batches by selected course locally
+  const availableBatches = useMemo(() => {
+    if (selectedCourseId === "all" || selectedCourseId === "none" || !selectedCourseId) {
+      return batches;
+    }
+    return batches.filter((b) => b.courseId === selectedCourseId);
+  }, [batches, selectedCourseId]);
 
   const batchResolvedCourseName = useMemo(() => {
     if (!selectedBatch) return null;
@@ -298,10 +299,15 @@ export default function Attendance() {
   };
 
   const handleCourseChange = (newCourseId: string) => {
-    // Only changeable when selectedBatchId is "all"
-    if (selectedBatchId === "all") {
-      setSelectedCourseId(newCourseId);
-      setPage(0);
+    setSelectedCourseId(newCourseId);
+    setPage(0);
+
+    // If currently selected batch does not belong to new course, reset batch to all
+    if (newCourseId !== "all" && newCourseId !== "none" && selectedBatchId !== "all") {
+      const currentBatch = batches.find((b) => b.id === selectedBatchId);
+      if (currentBatch && currentBatch.courseId && currentBatch.courseId !== newCourseId) {
+        setSelectedBatchId("all");
+      }
     }
   };
 
@@ -552,7 +558,7 @@ export default function Attendance() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Batches</SelectItem>
-                {batches.map((b) => (
+                {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
                     {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
@@ -566,37 +572,19 @@ export default function Attendance() {
             <Select
               value={selectedCourseId}
               onValueChange={handleCourseChange}
-              disabled={selectedBatchId !== "all"}
             >
               <SelectTrigger
-                className={cn(
-                  "h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-medium text-[#3A2A22]",
-                  selectedBatchId !== "all" && "bg-gray-50/80 cursor-not-allowed opacity-90"
-                )}
+                className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-medium text-[#3A2A22]"
               >
-                <SelectValue
-                  placeholder={
-                    selectedBatchId !== "all"
-                      ? batchResolvedCourseName || "No course assigned"
-                      : "All Courses"
-                  }
-                />
+                <SelectValue placeholder="All Courses" />
               </SelectTrigger>
               <SelectContent>
-                {selectedBatchId === "all" ? (
-                  <>
-                    <SelectItem value="all">All Courses</SelectItem>
-                    {courses.map((c) => (
-                      <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
-                        {cleanDisplayString(c.name || (c as any).courseName)}
-                      </SelectItem>
-                    ))}
-                  </>
-                ) : (
-                  <SelectItem value={selectedCourseId || "none"}>
-                    {batchResolvedCourseName || "No course assigned to this batch"}
+                <SelectItem value="all">All Courses</SelectItem>
+                {courses.map((c) => (
+                  <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
+                    {cleanDisplayString(c.name || (c as any).courseName)}
                   </SelectItem>
-                )}
+                ))}
               </SelectContent>
             </Select>
           </div>

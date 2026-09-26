@@ -91,14 +91,12 @@ test.describe('Trainer Dashboard API & Network Architecture Audit', () => {
     console.log('Trainees initial requests:', requests.map(r => `${r.method} ${r.pathname}${r.search} [${r.status}]`));
     console.log('Trainees duplicates found:', duplicates);
 
-    // Filter API calls
-    const coursesFilterCalls = requests.filter(r => r.pathname === '/api/trainer/filters/courses');
-    const batchesFilterCalls = requests.filter(r => r.pathname === '/api/trainer/filters/batches');
+    // Combined Filter API call: GET /api/trainer/filters
+    const combinedFilterCalls = requests.filter(r => r.pathname === '/api/trainer/filters');
     const traineesCalls = requests.filter(r => r.pathname === '/api/trainer/trainees');
 
-    // Assert exactly 1 request each
-    expect(coursesFilterCalls.length, 'Courses filter should be requested exactly once').toBe(1);
-    expect(batchesFilterCalls.length, 'Batches filter should be requested exactly once').toBe(1);
+    // Assert exactly 1 combined filter request (instead of 2 separate course/batch filter calls)
+    expect(combinedFilterCalls.length, 'Combined filters should be requested exactly once').toBe(1);
     expect(traineesCalls.length, 'Trainees list should be requested exactly once').toBe(1);
     expect(duplicates.length, 'There must be ZERO duplicate requests').toBe(0);
   });
@@ -160,7 +158,7 @@ test.describe('Trainer Dashboard API & Network Architecture Audit', () => {
     const requests = tracker.getRequests();
     console.log('Batches page requests:', requests.map(r => `${r.method} ${r.pathname}${r.search}`));
 
-    const courseFilterCalls = requests.filter(r => r.pathname === '/api/trainer/filters/courses');
+    const courseFilterCalls = requests.filter(r => r.pathname === '/api/trainer/filters' || r.pathname === '/api/trainer/filters/courses');
     const batchesCalls = requests.filter(r => r.pathname === '/api/trainer/batches');
 
     expect(courseFilterCalls.length, 'Course filter dropdown should be fetched once').toBe(1);
@@ -272,6 +270,8 @@ test.describe('Trainer Dashboard API & Network Architecture Audit', () => {
     const detailCalls = requests.filter(r => r.pathname === `/api/trainer/trainees/${traineeId}`);
     expect(detailCalls.length, 'Trainee detail endpoint must be requested exactly once').toBe(1);
     expect(detailCalls[0].status, 'Trainee detail endpoint must return HTTP 200').toBe(200);
+
+    
 
     // Strictly 0 unexpected requests
     expect(requests.filter(r => r.pathname === '/api/trainer/dashboard').length, 'No dashboard requests').toBe(0);
