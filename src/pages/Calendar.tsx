@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { fetchBatchIdByTraineeIdApi } from "@/helpers/api/batchTraineeApi";
-import { getTrainerBatchFiltersApi, getTrainerScheduleApi } from "@/services/api";
+import { getTrainerFiltersApi, getTrainerBatchFiltersApi, getTrainerScheduleApi } from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
 import NoBatchEnrollment from "../SideBar/noBatchEnrollment";
 import PageLoader from "@/components/ui/PageLoader";

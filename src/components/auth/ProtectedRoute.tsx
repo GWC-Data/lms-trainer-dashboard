@@ -9,7 +9,8 @@ export default function ProtectedRoute() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (user.role?.toUpperCase() !== "TRAINER") {
+  const role = user.role?.toUpperCase();
+  if (role !== "TRAINER" && role !== "ADMIN") {
     return (
       <Navigate
         to="/login"

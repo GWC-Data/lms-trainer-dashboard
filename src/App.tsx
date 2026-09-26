@@ -74,6 +74,5 @@ export default function App() {
         </Routes>
       </BrowserRouter>
     </ContentProvider>
-    </AuthProvider >
   );
 }

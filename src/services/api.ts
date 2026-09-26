@@ -1,5 +1,6 @@
 import axios, { AxiosError } from "axios";
 import { getOrCreateDeviceId } from "@/lib/deviceId";
+import { extractUserFromToken } from "@/lib/jwt";
 import { store } from "@/store/store";
 import { restoreSessionThunk } from "@/store/authSlice";
 
@@ -63,30 +64,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Shared in-flight refresh promise so multiple 401s firing at once (e.g.
-// several widgets fetching in parallel) trigger exactly one refresh call
-// instead of a stampede of redundant ones.
-let refreshInFlight: Promise<string | null> | null = null;
-
-async function performTokenRefresh(): Promise<string | null> {
-  const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-  if (!storedRefreshToken) return null;
-
-  try {
-    const response = await api.post<RefreshTokenResponse>("/auth/refresh-token", {
-      refreshToken: storedRefreshToken,
-    });
-    const { accessToken, refreshToken } = response.data;
-    localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("auth:token-refreshed", { detail: accessToken }));
-    }
-    return accessToken;
-  } catch {
-    return null;
-  }
-}
 
 // Response interceptor — on 401, attempt one silent token refresh before
 // falling back to a hard logout/redirect.
@@ -248,12 +225,15 @@ export async function loginApi(email: string, password: string): Promise<LoginRe
   });
   const data = response.data;
   const payload = data?.login || data;
+  const accessToken = payload.accessToken || data.accessToken;
+  const rawUser = payload.user || data.user;
+  const user = rawUser && accessToken ? extractUserFromToken(rawUser, accessToken) : rawUser;
   return {
     ...data,
-    accessToken: payload.accessToken || data.accessToken,
+    accessToken,
     refreshToken: payload.refreshToken || data.refreshToken,
     tokenExpiry: payload.tokenExpiry || data.tokenExpiry,
-    user: payload.user || data.user,
+    user,
   };
 }
 
@@ -266,6 +246,9 @@ export async function verifyOtpApi(verificationId: string, otp: string): Promise
     verificationId,
     otp,
   });
+  if (response.data?.accessToken && response.data?.user) {
+    response.data.user = extractUserFromToken(response.data.user, response.data.accessToken);
+  }
   return response.data;
 }
 
@@ -309,7 +292,11 @@ export async function restoreSessionApi(): Promise<SessionRestoreResult> {
     restoreInFlight = (async (): Promise<SessionRestoreResult> => {
       try {
         const response = await api.post<RefreshTokenResponse>("/auth/refresh-token");
-        const { accessToken, user } = response.data;
+        const { accessToken } = response.data;
+        let { user } = response.data;
+        if (accessToken && user) {
+          user = extractUserFromToken(user, accessToken);
+        }
         if (!user) {
           console.warn("[auth] refresh-token succeeded but response had no user — treating as logged out", response.data);
           return { status: "unauthenticated" };

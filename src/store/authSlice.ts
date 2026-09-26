@@ -9,6 +9,7 @@ import {
   type BackendUser,
   type SessionRestoreResult,
 } from "@/services/api";
+import { extractUserFromToken } from "@/lib/jwt";
 
 export interface AuthState {
   user: BackendUser | null;
@@ -44,7 +45,8 @@ function mapAuthError(err: unknown, fallbackMessage: string): string {
 }
 
 function assertTrainerRole(user: BackendUser): string | null {
-  if (user.role?.toUpperCase() !== "TRAINER") {
+  const role = user.role?.toUpperCase();
+  if (role !== "TRAINER" && role !== "ADMIN") {
     return "Access denied. Only trainer accounts can access this dashboard.";
   }
   return null;
@@ -69,9 +71,10 @@ export const loginThunk = createAsyncThunk<
     const raw = response as any;
     const authPayload = raw.login ?? raw;
     if (authPayload.accessToken && authPayload.user) {
-      const roleError = assertTrainerRole(authPayload.user);
+      const user = extractUserFromToken(authPayload.user, authPayload.accessToken);
+      const roleError = assertTrainerRole(user);
       if (roleError) return rejectWithValue(roleError);
-      return { requiresOtp: false, user: authPayload.user, accessToken: authPayload.accessToken };
+      return { requiresOtp: false, user, accessToken: authPayload.accessToken };
     }
 
     if (raw.verificationId) {
@@ -94,10 +97,11 @@ export const verifyOtpThunk = createAsyncThunk<
     if (!response.accessToken || !response.user) {
       return rejectWithValue("Invalid response from server.");
     }
-    const roleError = assertTrainerRole(response.user);
+    const user = extractUserFromToken(response.user, response.accessToken);
+    const roleError = assertTrainerRole(user);
     if (roleError) return rejectWithValue(roleError);
 
-    return { user: response.user, accessToken: response.accessToken };
+    return { user, accessToken: response.accessToken };
   } catch (err) {
     return rejectWithValue(mapAuthError(err, "Invalid OTP. Please try again."));
   }
@@ -169,7 +173,7 @@ const authSlice = createSlice({
       .addCase(restoreSessionThunk.fulfilled, (state, action) => {
         state.isBootstrapping = false;
         if (action.payload.status === "authenticated") {
-          state.user = action.payload.user;
+          state.user = extractUserFromToken(action.payload.user, action.payload.accessToken);
           state.accessToken = action.payload.accessToken;
         } else if (action.payload.status === "unauthenticated") {
           state.user = null;
