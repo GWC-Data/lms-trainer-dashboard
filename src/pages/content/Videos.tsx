@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Upload, PlayCircle, Clock, HardDrive } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
-import { courseById } from "@/data/mockData";
+import { getTrainerCourseFiltersApi } from "@/services/api";
 import { useContent } from "@/context/ContentContext";
 import UploadVideoModal from "@/components/forms/UploadVideoModal";
 import type { VideoAsset } from "@/types";
@@ -11,6 +11,24 @@ import type { VideoAsset } from "@/types";
 export default function Videos() {
   const { videos } = useContent();
   const [modalOpen, setModalOpen] = useState(false);
+  const [courseMap, setCourseMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let isMounted = true;
+    getTrainerCourseFiltersApi()
+      .then((courses) => {
+        if (!isMounted || !Array.isArray(courses)) return;
+        const map: Record<string, string> = {};
+        courses.forEach((c) => {
+          if (c.id) map[c.id] = c.name;
+        });
+        setCourseMap(map);
+      })
+      .catch((err) => console.error("Failed to load course names for videos:", err));
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   function handlePlay(v: VideoAsset) {
     if (v.fileUrl) {
@@ -36,7 +54,7 @@ export default function Videos() {
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
         {videos.map((v) => {
-          const course = courseById(v.courseId);
+          const courseName = courseMap[v.courseId] || "Course";
           return (
             <Card key={v.id} className="overflow-hidden">
               <button
@@ -50,7 +68,7 @@ export default function Videos() {
               </button>
               <CardContent className="p-4">
                 <p className="truncate font-medium text-[#3A2A22]">{v.title}</p>
-                <p className="mt-0.5 truncate text-xs text-[#B7A79D]">{course?.name}</p>
+                <p className="mt-0.5 truncate text-xs text-[#B7A79D]">{courseName}</p>
                 <div className="mt-3 flex items-center justify-between text-xs text-[#8C7A70]">
                   <span className="flex items-center gap-1">
                     <Clock className="h-3.5 w-3.5" /> {v.uploadedAt}

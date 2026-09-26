@@ -13,10 +13,10 @@ import { api } from "@/services/api";
  */
 export const fetchBatchIdByTraineeIdApi = async (traineeId: string): Promise<string[]> => {
   try {
-    // 1. Try real trainee batch endpoint: GET /trainees/:id/batch
+    // 1. Try real trainee batch endpoint: GET /api/trainees/:id/batch
     if (traineeId) {
       try {
-        const traineeBatchRes = await api.get(`/trainees/${traineeId}/batch`);
+        const traineeBatchRes = await api.get(`/api/trainees/${traineeId}/batch`);
         const singleBatch = traineeBatchRes.data?.batch;
         if (singleBatch && singleBatch.batchId) {
           return [singleBatch.batchId];
@@ -62,4 +62,23 @@ export const fetchBatchIdByTraineeIdApi = async (traineeId: string): Promise<str
     console.error(`Failed to resolve batches for user ${traineeId}:`, error);
     return [];
   }
+};
+
+/**
+ * Retrieves the trainee's assigned batch.
+ * Hits canonical GET /api/trainees/:id/batch
+ */
+export const getTraineeBatchApi = async (traineeId: string): Promise<any> => {
+  const response = await api.get(`/api/trainees/${traineeId}/batch`);
+  return response.data;
+};
+
+/**
+ * Assigns, changes, or clears a trainee's batch assignment.
+ * An empty batchId clears it.
+ * Hits canonical PUT /api/trainees/:id/batch
+ */
+export const assignTraineeBatchApi = async (traineeId: string, batchId: string): Promise<any> => {
+  const response = await api.put(`/api/trainees/${traineeId}/batch`, { batchId });
+  return response.data;
 };

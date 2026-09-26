@@ -33,11 +33,11 @@ import QuizResultsModal from "@/components/forms/QuizResultsModal";
 import {
   getQuizzesApi,
   deleteQuizApi,
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerBatchFiltersApi,
+  getTrainerCourseFiltersApi,
   type BackendQuizItem,
-  type BackendBatchItem,
-  type TrainerCourseItem,
+  type BatchFilterItem,
+  type CourseFilterItem,
 } from "@/services/api";
 import type { Quiz } from "@/types";
 import { toast } from "sonner";
@@ -68,8 +68,8 @@ export default function Quizzes() {
   const urlSearch = searchParams.get("search") || "";
 
   // Reference data
-  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BatchFilterItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [loadingRef, setLoadingRef] = useState(true);
 
   // Filter states
@@ -90,7 +90,7 @@ export default function Quizzes() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Parallel Load: Batches, Courses, and Initial Quizzes
+  // 1. Parallel Load: Lightweight Batches & Courses Filters (Once on mount)
   // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -99,32 +99,32 @@ export default function Quizzes() {
       try {
         setLoadingRef(true);
         const [batchesRes, coursesRes] = await Promise.all([
-          getTrainerBatchesApi().catch((err) => {
-            console.warn("Failed to load trainer batches:", err);
-            return [] as BackendBatchItem[];
+          getTrainerBatchFiltersApi().catch((err) => {
+            console.warn("Failed to load trainer batch filters:", err);
+            return [] as BatchFilterItem[];
           }),
-          getTrainerCoursesApi().catch((err) => {
-            console.warn("Failed to load trainer courses:", err);
-            return { courses: [] as TrainerCourseItem[] };
+          getTrainerCourseFiltersApi().catch((err) => {
+            console.warn("Failed to load trainer course filters:", err);
+            return [] as CourseFilterItem[];
           }),
         ]);
 
         if (!mounted) return;
 
         setBatches(batchesRes);
-        setCourses(coursesRes?.courses || []);
+        setCourses(coursesRes);
 
         // Reconcile initial selections with URL query params
         if (urlBatchId && batchesRes.some((b) => b.id === urlBatchId)) {
           setSelectedBatchId(urlBatchId);
           const found = batchesRes.find((b) => b.id === urlBatchId);
-          const targetCourseId = found?.courseId || found?.course?.id;
+          const targetCourseId = found?.courseId;
           if (targetCourseId) {
             setSelectedCourseId(targetCourseId);
           } else {
             setSelectedCourseId("none");
           }
-        } else if (urlCourseId && (coursesRes?.courses || []).some((c) => c.id === urlCourseId)) {
+        } else if (urlCourseId && coursesRes.some((c) => c.id === urlCourseId)) {
           setSelectedCourseId(urlCourseId);
           setSelectedBatchId("all");
         }
@@ -139,7 +139,7 @@ export default function Quizzes() {
     return () => {
       mounted = false;
     };
-  }, [urlBatchId, urlCourseId]);
+  }, []);
 
   // Sync search input with URL
   useEffect(() => {
@@ -156,24 +156,15 @@ export default function Quizzes() {
 
   const selectedCourse = useMemo(() => {
     if (selectedCourseId === "all" || selectedCourseId === "none") return null;
-    return (
-      courses.find((c) => c.id === selectedCourseId) ||
-      (selectedBatch?.course?.courseName
-        ? {
-            id: selectedCourseId,
-            courseName: selectedBatch.course.courseName,
-          }
-        : null)
-    );
-  }, [courses, selectedCourseId, selectedBatch]);
+    return courses.find((c) => c.id === selectedCourseId) || null;
+  }, [courses, selectedCourseId]);
 
   const batchResolvedCourseName = useMemo(() => {
     if (!selectedBatch) return null;
-    if (selectedBatch.course?.courseName) return cleanDisplayString(selectedBatch.course.courseName);
-    const targetCourseId = selectedBatch.courseId || selectedBatch.course?.id;
+    const targetCourseId = selectedBatch.courseId;
     if (targetCourseId) {
       const match = courses.find((c) => c.id === targetCourseId);
-      if (match?.courseName) return cleanDisplayString(match.courseName);
+      if (match?.name) return cleanDisplayString(match.name);
     }
     return null;
   }, [selectedBatch, courses]);
@@ -227,7 +218,7 @@ export default function Quizzes() {
       });
     } else {
       const found = batches.find((b) => b.id === newBatchId);
-      const targetCourseId = found?.courseId || found?.course?.id;
+      const targetCourseId = found?.courseId;
       if (targetCourseId) {
         setSelectedCourseId(targetCourseId);
         setSearchParams((prev) => {
@@ -401,7 +392,7 @@ export default function Quizzes() {
                 <SelectItem value="all">All Batches</SelectItem>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.batchName || (b as any).name)}
+                    {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -435,7 +426,7 @@ export default function Quizzes() {
                     <SelectItem value="all">All Courses</SelectItem>
                     {courses.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {cleanDisplayString(c.name || c.courseName)}
+                        {cleanDisplayString(c.name || (c as any).courseName)}
                       </SelectItem>
                     ))}
                   </>
@@ -491,7 +482,7 @@ export default function Quizzes() {
             <span className="font-semibold text-[#3A2A22]">Active Scope:</span>
             {selectedBatch && (
               <Badge tone="blue" className="px-2.5 py-0.5 text-xs font-medium">
-                Batch: {cleanDisplayString(selectedBatch.batchName)}
+                Batch: {cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}
               </Badge>
             )}
             {batchResolvedCourseName || selectedCourse ? (
