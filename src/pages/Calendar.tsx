@@ -215,7 +215,7 @@ const Calendar: React.FC = () => {
       setIsLoading(true);
       try {
         if (isTrainer || isAdmin) {
-          const trainerBatches = await getTrainerBatchFiltersApi();
+          const { batches: trainerBatches } = await getTrainerFiltersApi();
           const filters: BatchFilter[] = (trainerBatches || [])
             .map((b: any) => ({
               id: b.id || b.batchId,

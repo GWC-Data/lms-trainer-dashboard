@@ -20,13 +20,12 @@ import {
 } from "@/components/ui/Select";
 import FileDropzone from "@/components/ui/FileDropzone";
 import {
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerFiltersApi,
   getModulesForCourseApi,
   uploadDocumentApi,
-  type BackendBatchItem,
+  type BatchFilterItem,
+  type CourseFilterItem,
   type BackendModuleSimpleItem,
-  type TrainerCourseItem,
 } from "@/services/api";
 
 interface UploadDocumentModalProps {
@@ -114,8 +113,8 @@ export default function UploadDocumentModal({
   defaultModuleId,
   onSuccess,
 }: UploadDocumentModalProps) {
-  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [allCourses, setAllCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BatchFilterItem[]>([]);
+  const [allCourses, setAllCourses] = useState<CourseFilterItem[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [modules, setModules] = useState<BackendModuleSimpleItem[]>([]);
 
@@ -148,7 +147,7 @@ export default function UploadDocumentModal({
   const courseId = watch("courseId");
   const moduleId = watch("moduleId");
 
-  // Step 1: Fetch authorized batches and courses from BigQuery when modal opens
+  // Step 1: Fetch authorized batches and courses from cached trainer filters when modal opens
   useEffect(() => {
     if (!open) return;
 
@@ -162,23 +161,20 @@ export default function UploadDocumentModal({
       return null;
     });
 
-    Promise.all([
-      getTrainerBatchesApi(),
-      getTrainerCoursesApi().catch(() => ({ courses: [] })),
-    ])
-      .then(([batchList, coursesRes]) => {
+    getTrainerFiltersApi()
+      .then(({ batches: batchList, courses: coursesRes }) => {
         if (cancelled) return;
-        setBatches(batchList);
-        setAllCourses(coursesRes?.courses || []);
+        setBatches(batchList || []);
+        setAllCourses(coursesRes || []);
 
         let initialBatchId = defaultBatchId;
         if (!initialBatchId && defaultCourseId) {
-          const matchBatch = batchList.find(
-            (b) => b.courseId === defaultCourseId || b.course?.id === defaultCourseId
+          const matchBatch = (batchList || []).find(
+            (b) => b.courseId === defaultCourseId
           );
           if (matchBatch) initialBatchId = matchBatch.id;
         }
-        if (!initialBatchId && batchList.length > 0) {
+        if (!initialBatchId && batchList && batchList.length > 0) {
           initialBatchId = batchList[0].id;
         }
 
@@ -217,7 +213,7 @@ export default function UploadDocumentModal({
     if (!open || !batchId) return;
 
     const foundBatch = batches.find((b) => b.id === batchId);
-    const targetCourseId = foundBatch?.courseId || foundBatch?.course?.id;
+    const targetCourseId = foundBatch?.courseId;
 
     if (!targetCourseId) {
       setCourses([]);
@@ -228,14 +224,7 @@ export default function UploadDocumentModal({
     if (matched) {
       const courseOpt: CourseOption = {
         id: matched.id || (matched as any).courseId,
-        name: matched.courseName || (matched as any).name,
-      };
-      setCourses([courseOpt]);
-      setValue("courseId", courseOpt.id);
-    } else if (foundBatch?.course?.courseName) {
-      const courseOpt: CourseOption = {
-        id: targetCourseId,
-        name: foundBatch.course.courseName,
+        name: matched.name || (matched as any).courseName,
       };
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id);
@@ -282,6 +271,16 @@ export default function UploadDocumentModal({
   }, [open, courseId, defaultModuleId, setValue]);
 
   function handleFileSelected(file: File) {
+    const ext = `.${file.name.split(".").pop()?.toLowerCase()}`;
+    const allowed = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xlsx", ".xls", ".txt", ".csv"];
+    if (!allowed.includes(ext)) {
+      setFileError("Unsupported file type. Allowed formats: PDF, Word, PowerPoint, Excel, or Text.");
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      setFileError("File size exceeds 50MB limit.");
+      return;
+    }
     setSelected((prev) => {
       if (prev) URL.revokeObjectURL(prev.url);
       return { file, url: URL.createObjectURL(file) };
@@ -295,6 +294,7 @@ export default function UploadDocumentModal({
       if (prev) URL.revokeObjectURL(prev.url);
       return null;
     });
+    setFileError("");
   }
 
   async function onSubmit(values: FormValues) {
@@ -367,16 +367,24 @@ export default function UploadDocumentModal({
             <FileDropzone
               accept={{
                 "application/pdf": [".pdf"],
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+                "application/vnd.ms-excel": [".xls"],
+                "application/msexcel": [".xls", ".xlsx"],
+                "application/x-msexcel": [".xls", ".xlsx"],
+                "application/x-ms-excel": [".xls", ".xlsx"],
+                "application/x-excel": [".xls", ".xlsx"],
+                "application/vnd.ms-excel.sheet.macroEnabled.12": [".xlsm"],
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
                 "application/msword": [".doc"],
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
                 "application/vnd.ms-powerpoint": [".ppt"],
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-                "application/vnd.ms-excel": [".xls"],
                 "text/plain": [".txt"],
+                "text/csv": [".csv"],
+                "application/csv": [".csv"],
               }}
               file={selected?.file || null}
               onFileSelected={handleFileSelected}
+              onError={setFileError}
               hint="PDF, Word, PowerPoint, Excel, or Text (up to 50MB)"
               error={fileError}
             />
@@ -408,7 +416,7 @@ export default function UploadDocumentModal({
               <SelectContent>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.batchName || (b as any).name)}
+                    {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
