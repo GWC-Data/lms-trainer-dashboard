@@ -34,7 +34,6 @@ export default function AddLessonModal({ open, onOpenChange, defaultCourseId }) 
             const opts = modules.filter((m) => m.courseId === initialCourseId);
             reset({ title: "", courseId: initialCourseId, moduleId: opts[0]?.id ?? "", type: "video", duration: "" });
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, defaultCourseId]);
     useEffect(() => {
         const opts = modules.filter((m) => m.courseId === courseId);
