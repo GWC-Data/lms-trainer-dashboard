@@ -6,15 +6,12 @@ import {
   Users,
   ChevronDown,
   ChevronLeft,
-  ChevronRight,
-  CheckCircle2,
   CircleDot,
-  Circle,
   Mail,
   BookOpen,
   Layers
 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/Card";
+import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { ProgressBar } from "@/components/ui/ProgressBar";
@@ -37,6 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import PageLoader from "@/components/ui/PageLoader";
+import Pagination from "@/components/ui/Pagination";
 import { cn } from "@/lib/utils";
 
 function cleanDisplayString(str?: string | null): string {
@@ -802,41 +800,19 @@ export default function Trainees() {
           </table>
         </div>
 
-        {pagination && pagination.totalPages > 1 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-[#F5E2DA] bg-[#FFFBF9]">
-            <p className="text-xs text-[#8C7A70]">
-              Showing <span className="font-semibold text-[#3A2A22]">{(pagination.page - 1) * pagination.limit + 1}</span> to{" "}
-              <span className="font-semibold text-[#3A2A22]">
-                {Math.min(pagination.page * pagination.limit, pagination.total)}
-              </span>{" "}
-              of <span className="font-semibold text-[#3A2A22]">{pagination.total}</span> trainees
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={!pagination.hasPreviousPage || loadingTrainees}
-                className="h-8 px-2.5 text-xs text-[#3A2A22] border-[#F5E2DA] hover:bg-white"
-              >
-                <ChevronLeft className="h-4 w-4 mr-1" />
-                Previous
-              </Button>
-              <span className="text-xs font-medium text-[#3A2A22] px-2">
-                Page {pagination.page} of {pagination.totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
-                disabled={!pagination.hasNextPage || loadingTrainees}
-                className="h-8 px-2.5 text-xs text-[#3A2A22] border-[#F5E2DA] hover:bg-white"
-              >
-                Next
-                <ChevronRight className="h-4 w-4 ml-1" />
-              </Button>
-            </div>
-          </div>
+        {pagination && pagination.total > 0 && (
+          <Pagination
+            page={page}
+            totalPages={pagination.totalPages}
+            total={pagination.total}
+            limit={pagination.limit}
+            hasPreviousPage={pagination.hasPreviousPage}
+            hasNextPage={pagination.hasNextPage}
+            onPageChange={setPage}
+            itemLabel="trainees"
+            loading={loadingTrainees}
+            className="border-t border-[#F5E2DA] rounded-none rounded-b-2xl"
+          />
         )}
       </Card>
     </div>

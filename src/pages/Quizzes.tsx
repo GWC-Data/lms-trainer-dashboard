@@ -21,6 +21,7 @@ import Input from "@/components/ui/Input";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Skeleton } from "@/components/ui/Skeleton";
 import PageLoader from "@/components/ui/PageLoader";
+import Pagination from "@/components/ui/Pagination";
 import {
   Select,
   SelectContent,
@@ -31,16 +32,16 @@ import {
 import QuizFormModal from "@/components/forms/QuizFormModal";
 import QuizResultsModal from "@/components/forms/QuizResultsModal";
 import {
-  getQuizzesApi,
+  getTrainerQuizzesApi,
   deleteQuizApi,
   getTrainerFiltersApi,
   type BackendQuizItem,
   type BatchFilterItem,
   type CourseFilterItem,
+  type PaginationMetadata,
 } from "@/services/api";
 import type { Quiz } from "@/types";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 
 function cleanDisplayString(str?: string | null): string {
   if (!str) return "";
@@ -59,26 +60,41 @@ function formatDate(dateStr?: string | null): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+interface QuizFilters {
+  search: string;
+  batchId: string;
+  courseId: string;
+  moduleId: string;
+  status: string;
+  page: number;
+  limit: number;
+}
+
 export default function Quizzes() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const urlBatchId = searchParams.get("batchId") || "";
-  const urlCourseId = searchParams.get("courseId") || "";
-  const urlStatus = searchParams.get("status") || "all";
-  const urlSearch = searchParams.get("search") || "";
 
-  // Reference data
+  // 1. Reference dropdown data (Fetched once on mount)
   const [batches, setBatches] = useState<BatchFilterItem[]>([]);
   const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [loadingRef, setLoadingRef] = useState(true);
 
-  // Filter states
-  const [selectedBatchId, setSelectedBatchId] = useState<string>(urlBatchId || "all");
-  const [selectedCourseId, setSelectedCourseId] = useState<string>(urlCourseId || "all");
-  const [selectedStatus, setSelectedStatus] = useState<string>(urlStatus || "all");
-  const [searchQuery, setSearchQuery] = useState(urlSearch);
+  // 2. Single source of truth for all filters & pagination
+  const [filters, setFilters] = useState<QuizFilters>(() => ({
+    search: searchParams.get("search") || "",
+    batchId: searchParams.get("batchId") || "",
+    courseId: searchParams.get("courseId") || "",
+    moduleId: searchParams.get("moduleId") || "",
+    status: searchParams.get("status") || "",
+    page: Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1),
+    limit: 10,
+  }));
 
-  // Data states
+  // Local state for debounced search input
+  const [searchInput, setSearchInput] = useState(filters.search);
+
+  // 3. Quiz Data states
   const [quizzes, setQuizzes] = useState<BackendQuizItem[]>([]);
+  const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,7 +105,7 @@ export default function Quizzes() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Parallel Load: Lightweight Batches & Courses Filters (Once on mount)
+  // Load Reference Filters (Batches & Courses) ONLY ONCE on mount
   // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -106,21 +122,6 @@ export default function Quizzes() {
 
         setBatches(batchesRes);
         setCourses(coursesRes);
-
-        // Reconcile initial selections with URL query params
-        if (urlBatchId && batchesRes.some((b) => b.id === urlBatchId)) {
-          setSelectedBatchId(urlBatchId);
-          const found = batchesRes.find((b) => b.id === urlBatchId);
-          const targetCourseId = found?.courseId;
-          if (targetCourseId) {
-            setSelectedCourseId(targetCourseId);
-          } else {
-            setSelectedCourseId("none");
-          }
-        } else if (urlCourseId && coursesRes.some((c) => c.id === urlCourseId)) {
-          setSelectedCourseId(urlCourseId);
-          setSelectedBatchId("all");
-        }
       } catch (err) {
         console.error("Failed to load reference data for quizzes:", err);
       } finally {
@@ -134,184 +135,155 @@ export default function Quizzes() {
     };
   }, []);
 
-  // Sync search input with URL
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Debounce search input (350ms): updates filters.search and resets page to 1
+  // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    setSearchQuery(urlSearch);
-  }, [urlSearch]);
+    const timer = setTimeout(() => {
+      setFilters((prev) => {
+        if (prev.search === searchInput) return prev;
+        return {
+          ...prev,
+          search: searchInput,
+          page: 1,
+        };
+      });
+    }, 350);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 2. Canonical Batch → Course Resolution
-  // ─────────────────────────────────────────────────────────────────────────────
-  const selectedBatch = useMemo(
-    () => (selectedBatchId === "all" ? null : batches.find((b) => b.id === selectedBatchId) || null),
-    [batches, selectedBatchId]
-  );
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-  const selectedCourse = useMemo(() => {
-    if (selectedCourseId === "all" || selectedCourseId === "none") return null;
-    return courses.find((c) => c.id === selectedCourseId) || null;
-  }, [courses, selectedCourseId]);
-
-  // Dynamically filter available batches by selected course locally
-  const availableBatches = useMemo(() => {
-    if (selectedCourseId === "all" || selectedCourseId === "none" || !selectedCourseId) {
-      return batches;
+  // Keep searchInput in sync if URL query parameter changes externally
+  useEffect(() => {
+    const urlSearch = searchParams.get("search") || "";
+    if (urlSearch !== searchInput && urlSearch !== filters.search) {
+      setSearchInput(urlSearch);
     }
-    return batches.filter((b) => b.courseId === selectedCourseId);
-  }, [batches, selectedCourseId]);
-
-  const batchResolvedCourseName = useMemo(() => {
-    if (!selectedBatch) return null;
-    const targetCourseId = selectedBatch.courseId;
-    if (targetCourseId) {
-      const match = courses.find((c) => c.id === targetCourseId);
-      if (match?.name) return cleanDisplayString(match.name);
-    }
-    return null;
-  }, [selectedBatch, courses]);
+  }, [searchParams, searchInput, filters.search]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 3. Fetch Quizzes (Parallel / Scoped)
+  // Synchronize URL search params with active filters
+  // ─────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (filters.search.trim()) next.set("search", filters.search.trim());
+    if (filters.batchId && filters.batchId !== "all") next.set("batchId", filters.batchId);
+    if (filters.courseId && filters.courseId !== "all" && filters.courseId !== "none") {
+      next.set("courseId", filters.courseId);
+    }
+    if (filters.moduleId && filters.moduleId !== "all") next.set("moduleId", filters.moduleId);
+    if (filters.status && filters.status !== "all") next.set("status", filters.status);
+    if (filters.page > 1) next.set("page", String(filters.page));
+
+    setSearchParams(next, { replace: true });
+  }, [filters, setSearchParams]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Fetch Quizzes from single Unified API: GET /api/trainer/quizzes
   // ─────────────────────────────────────────────────────────────────────────────
   const fetchQuizzes = useCallback(async () => {
-    if (selectedCourseId === "none") {
-      setQuizzes([]);
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     setError(null);
     try {
-      const data = await getQuizzesApi({
-        courseId:
-          selectedCourseId && selectedCourseId !== "all" && selectedCourseId !== "none"
-            ? selectedCourseId
-            : undefined,
-        batchId: selectedBatchId && selectedBatchId !== "all" ? selectedBatchId : undefined,
-        status: selectedStatus && selectedStatus !== "all" ? selectedStatus : undefined,
+      const res = await getTrainerQuizzesApi({
+        page: filters.page,
+        limit: filters.limit,
+        search: filters.search.trim() || undefined,
+        batchId: filters.batchId || undefined,
+        courseId: filters.courseId || undefined,
+        moduleId: filters.moduleId || undefined,
+        status: filters.status || undefined,
       });
-      setQuizzes(data);
-    } catch (err: any) {
+
+      setQuizzes(res.quizzes);
+      setPagination(res.pagination || null);
+    } catch (err: unknown) {
       console.error("Failed to load quizzes:", err);
       setError("Unable to load quizzes. Please try again.");
     } finally {
       setLoading(false);
     }
-  }, [selectedCourseId, selectedBatchId, selectedStatus]);
+  }, [filters]);
 
   useEffect(() => {
     if (!loadingRef) {
       fetchQuizzes();
     }
-  }, [selectedBatchId, selectedCourseId, selectedStatus, loadingRef, fetchQuizzes]);
+  }, [fetchQuizzes, loadingRef]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 4. Filter Handlers
+  // Filter Handlers - Do NOT lose other selected filters, Reset Page to 1
   // ─────────────────────────────────────────────────────────────────────────────
   const handleBatchChange = (newBatchId: string) => {
-    setSelectedBatchId(newBatchId);
-    if (newBatchId === "all") {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("batchId");
-        return next;
-      });
-    } else {
-      const found = batches.find((b) => b.id === newBatchId);
-      const targetCourseId = found?.courseId;
-      if (targetCourseId) {
-        setSelectedCourseId(targetCourseId);
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("batchId", newBatchId);
-          next.set("courseId", targetCourseId);
-          return next;
-        });
-      } else {
-        setSelectedCourseId("none");
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("batchId", newBatchId);
-          next.delete("courseId");
-          return next;
-        });
-      }
-    }
+    setFilters((prev) => ({
+      ...prev,
+      batchId: newBatchId === "all" ? "" : newBatchId,
+      page: 1,
+    }));
   };
 
   const handleCourseChange = (newCourseId: string) => {
-    setSelectedCourseId(newCourseId);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (newCourseId === "all") {
-        next.delete("courseId");
-      } else {
-        next.set("courseId", newCourseId);
-      }
-      return next;
-    });
-
-    // If current batch does not belong to this new course, reset batch to all
-    if (newCourseId !== "all" && newCourseId !== "none" && selectedBatchId !== "all") {
-      const currentBatch = batches.find((b) => b.id === selectedBatchId);
-      if (currentBatch && currentBatch.courseId && currentBatch.courseId !== newCourseId) {
-        setSelectedBatchId("all");
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete("batchId");
-          return next;
-        });
-      }
-    }
+    setFilters((prev) => ({
+      ...prev,
+      courseId: newCourseId === "all" || newCourseId === "none" ? "" : newCourseId,
+      page: 1,
+    }));
   };
 
   const handleStatusChange = (newStatus: string) => {
-    setSelectedStatus(newStatus);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (newStatus === "all") {
-        next.delete("status");
-      } else {
-        next.set("status", newStatus);
-      }
-      return next;
-    });
-  };
-
-  const handleSearchChange = (val: string) => {
-    setSearchQuery(val);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (val.trim()) {
-        next.set("search", val.trim());
-      } else {
-        next.delete("search");
-      }
-      return next;
-    });
+    setFilters((prev) => ({
+      ...prev,
+      status: newStatus === "all" ? "" : newStatus,
+      page: 1,
+    }));
   };
 
   const handleClearFilters = () => {
-    setSelectedBatchId("all");
-    setSelectedCourseId("all");
-    setSelectedStatus("all");
-    setSearchQuery("");
-    setSearchParams({});
+    setSearchInput("");
+    setFilters({
+      search: "",
+      batchId: "",
+      courseId: "",
+      moduleId: "",
+      status: "",
+      page: 1,
+      limit: 10,
+    });
   };
 
-  // Client-side search filtering on quiz title / course / batch / module
-  const filteredQuizzes = useMemo(() => {
-    if (!searchQuery.trim()) return quizzes;
-    const q = searchQuery.toLowerCase().trim();
-    return quizzes.filter(
-      (quiz) =>
-        quiz.title?.toLowerCase().includes(q) ||
-        quiz.courseName?.toLowerCase().includes(q) ||
-        quiz.batchName?.toLowerCase().includes(q) ||
-        quiz.moduleName?.toLowerCase().includes(q)
-    );
-  }, [quizzes, searchQuery]);
+  const handlePageChange = (newPage: number) => {
+    setFilters((prev) => ({
+      ...prev,
+      page: newPage,
+    }));
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Active scope helpers
+  // ─────────────────────────────────────────────────────────────────────────────
+  const selectedBatch = useMemo(
+    () => (!filters.batchId ? null : batches.find((b) => b.id === filters.batchId) || null),
+    [batches, filters.batchId]
+  );
+
+  const selectedCourse = useMemo(
+    () =>
+      !filters.courseId
+        ? null
+        : courses.find((c) => c.id === filters.courseId || c.courseId === filters.courseId) ||
+          null,
+    [courses, filters.courseId]
+  );
+
+  const isFilterActive =
+    Boolean(filters.batchId) ||
+    Boolean(filters.courseId) ||
+    Boolean(filters.moduleId) ||
+    Boolean(filters.status) ||
+    Boolean(filters.search.trim()) ||
+    filters.page > 1;
+
+  const totalQuizzes = pagination?.total ?? quizzes.length;
 
   function openCreate() {
     setEditingQuiz(null);
@@ -335,19 +307,14 @@ export default function Quizzes() {
       } else {
         toast.error(res.message || "Failed to delete quiz.");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error deleting quiz:", err);
-      toast.error(err?.response?.data?.message || "Failed to delete quiz.");
+      const axiosErr = err as { response?: { data?: { message?: string } } };
+      toast.error(axiosErr?.response?.data?.message || "Failed to delete quiz.");
     } finally {
       setDeletingId(null);
     }
   }
-
-  const isFilterActive =
-    selectedBatchId !== "all" ||
-    selectedCourseId !== "all" ||
-    selectedStatus !== "all" ||
-    Boolean(searchQuery.trim());
 
   if ((loading || loadingRef) && quizzes.length === 0) {
     return <PageLoader />;
@@ -369,19 +336,19 @@ export default function Quizzes() {
 
         {/* Action Controls in One Unified Line */}
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 w-full">
-          {/* 1. Search Quizzes Input */}
+          {/* 1. Search Quizzes Input (Server-side debounced) */}
           <div className="relative flex-1 min-w-[180px] max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C7B6AC]" />
             <Input
-              value={searchQuery}
-              onChange={(e) => handleSearchChange(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Search quizzes..."
               className="h-10 pl-9 pr-8 rounded-xl border-[#F0DED4] bg-white text-xs text-[#3A2A22] placeholder:text-[#C7B6AC]"
             />
-            {searchQuery && (
+            {searchInput && (
               <button
                 type="button"
-                onClick={() => handleSearchChange("")}
+                onClick={() => setSearchInput("")}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#B7A79D] hover:text-[#DE896A] transition-colors"
               >
                 <X className="h-3.5 w-3.5" />
@@ -392,18 +359,18 @@ export default function Quizzes() {
           {/* 2. Batch Selector Dropdown */}
           <div className="w-44 sm:w-48 shrink-0">
             <Select
-              value={selectedBatchId}
+              value={filters.batchId || "all"}
               onValueChange={handleBatchChange}
-              disabled={loadingRef || availableBatches.length === 0}
+              disabled={loadingRef || batches.length === 0}
             >
               <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-semibold text-[#233047] shadow-xs focus:ring-[#DE896A]/20">
                 <SelectValue placeholder={loadingRef ? "Loading batches..." : "All Batches"} />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Batches</SelectItem>
-                {availableBatches.map((b) => (
+                {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.name || (b as any).batchName)}
+                    {cleanDisplayString(b.name || b.batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -413,20 +380,18 @@ export default function Quizzes() {
           {/* 3. Course Selector Dropdown */}
           <div className="w-48 sm:w-56 shrink-0">
             <Select
-              value={selectedCourseId}
+              value={filters.courseId || "all"}
               onValueChange={handleCourseChange}
               disabled={loadingRef}
             >
-              <SelectTrigger
-                className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-semibold text-[#233047] shadow-xs focus:ring-[#DE896A]/20"
-              >
+              <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-semibold text-[#233047] shadow-xs focus:ring-[#DE896A]/20">
                 <SelectValue placeholder="All Courses" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Courses</SelectItem>
                 {courses.map((c) => (
-                  <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
-                    {cleanDisplayString(c.name || (c as any).courseName)}
+                  <SelectItem key={c.id || c.courseId} value={c.id || c.courseId || ""}>
+                    {cleanDisplayString(c.name || c.courseName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -435,7 +400,7 @@ export default function Quizzes() {
 
           {/* 4. Status Filter Dropdown */}
           <div className="w-36 shrink-0">
-            <Select value={selectedStatus} onValueChange={handleStatusChange}>
+            <Select value={filters.status || "all"} onValueChange={handleStatusChange}>
               <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-semibold text-[#233047] shadow-xs focus:ring-[#DE896A]/20">
                 <SelectValue placeholder="All Status" />
               </SelectTrigger>
@@ -470,27 +435,33 @@ export default function Quizzes() {
       {/* ─────────────────────────────────────────────────────────────────────────
           ACTIVE CONTEXT SCOPE INDICATOR
           ───────────────────────────────────────────────────────────────────────── */}
-      {(selectedBatchId !== "all" || (selectedCourseId !== "all" && selectedCourseId !== "none")) && (
+      {(Boolean(filters.batchId) || Boolean(filters.courseId) || Boolean(filters.status) || Boolean(filters.search.trim())) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#F5E2DA] bg-gradient-to-r from-[#FFFBF9] via-[#FFF6F2] to-[#FAF3EF] px-4 py-2.5 shadow-xs text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-[#3A2A22]">Active Scope:</span>
             {selectedBatch && (
               <Badge tone="blue" className="px-2.5 py-0.5 text-xs font-medium">
-                Batch: {cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}
+                Batch: {cleanDisplayString(selectedBatch.name || selectedBatch.batchName)}
               </Badge>
             )}
-            {batchResolvedCourseName || selectedCourse ? (
+            {selectedCourse && (
               <Badge tone="orange" className="px-2.5 py-0.5 text-xs font-medium">
-                Course: {batchResolvedCourseName || cleanDisplayString((selectedCourse as any)?.courseName || (selectedCourse as any)?.name)}
+                Course: {cleanDisplayString(selectedCourse.name || selectedCourse.courseName)}
               </Badge>
-            ) : selectedCourseId === "none" ? (
-              <Badge tone="red" className="px-2.5 py-0.5 text-xs font-medium">
-                No course assigned to batch
+            )}
+            {filters.status && (
+              <Badge tone="neutral" className="px-2.5 py-0.5 text-xs font-medium">
+                Status: {filters.status.toUpperCase()}
               </Badge>
-            ) : null}
+            )}
+            {filters.search.trim() && (
+              <Badge tone="neutral" className="px-2.5 py-0.5 text-xs font-medium">
+                Search: "{filters.search.trim()}"
+              </Badge>
+            )}
           </div>
           <span className="text-[#8C7A70] font-medium">
-            {filteredQuizzes.length} {filteredQuizzes.length === 1 ? "quiz" : "quizzes"} found
+            {totalQuizzes} {totalQuizzes === 1 ? "quiz" : "quizzes"} found
           </span>
         </div>
       )}
@@ -549,7 +520,7 @@ export default function Quizzes() {
       {/* ─────────────────────────────────────────────────────────────────────────
           EMPTY STATE
           ───────────────────────────────────────────────────────────────────────── */}
-      {!loading && !error && filteredQuizzes.length === 0 && (
+      {!loading && !error && quizzes.length === 0 && (
         <div className="rounded-2xl border border-[#F0DED4] bg-white p-12 text-center shadow-xs">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FBECE7] text-[#DE896A]">
             <HelpCircle className="h-7 w-7" />
@@ -584,9 +555,9 @@ export default function Quizzes() {
       {/* ─────────────────────────────────────────────────────────────────────────
           QUIZ CARDS: RESPONSIVE 3-COLUMN GRID
           ───────────────────────────────────────────────────────────────────────── */}
-      {!loading && filteredQuizzes.length > 0 && (
+      {!loading && quizzes.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredQuizzes.map((q) => {
+          {quizzes.map((q) => {
             const submissions = q.submissions ?? 0;
             const totalTrainees = q.totalTrainees ?? 0;
             const avgScore = q.avgScore ?? 0;
@@ -729,6 +700,23 @@ export default function Quizzes() {
             );
           })}
         </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────────────
+          PAGINATION CONTROLS
+          ───────────────────────────────────────────────────────────────────────── */}
+      {!loading && pagination && pagination.total > 0 && (
+        <Pagination
+          page={filters.page}
+          totalPages={pagination.totalPages}
+          total={pagination.total}
+          limit={filters.limit}
+          hasPreviousPage={pagination.hasPreviousPage}
+          hasNextPage={pagination.hasNextPage}
+          onPageChange={handlePageChange}
+          itemLabel="quizzes"
+          loading={loading}
+        />
       )}
 
       {/* ─────────────────────────────────────────────────────────────────────────

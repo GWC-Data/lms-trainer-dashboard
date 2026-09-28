@@ -587,8 +587,8 @@ export interface TrainerCoursesResponse {
   success: boolean;
   statusCode?: number;
   message?: string;
-  data?: TrainerCourseItem[];
-  courses: TrainerCourseItem[];
+  data: TrainerCourseItem[];
+  courses?: TrainerCourseItem[];
   pagination?: PaginationMetadata;
 }
 
@@ -658,13 +658,17 @@ export async function getTrainerCoursesApi(params?: {
   page?: number;
   limit?: number;
   search?: string;
+  courseId?: string;
+  batchId?: string;
 }): Promise<TrainerCoursesResponse> {
   const res = await deduplicatedGet<TrainerCoursesResponse>("/api/trainer/courses", {
     params: params ?? undefined
   });
+  const list = res?.data || (res as any)?.courses || [];
   return {
     ...res,
-    courses: res?.courses || (res as any)?.data || []
+    data: list,
+    courses: list
   };
 }
 
@@ -897,6 +901,7 @@ export async function getTrainerBatchesApi(
 
 export async function getTrainerBatchesPaginatedApi(params?: {
   courseId?: string;
+  mode?: string;
   page?: number;
   limit?: number;
   search?: string;
@@ -1038,10 +1043,29 @@ export interface BackendQuizItem {
   totalTrainees?: number;
 }
 
+export interface TrainerQuizFilterParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  batchId?: string;
+  courseId?: string;
+  moduleId?: string;
+  status?: string;
+}
+
 export interface QuizzesResponse {
   success: boolean;
+  statusCode?: number;
   message?: string;
+  data?: BackendQuizItem[];
   quizzes: BackendQuizItem[];
+  pagination?: PaginationMetadata;
+}
+
+export interface TrainerQuizzesResult {
+  quizzes: BackendQuizItem[];
+  pagination?: PaginationMetadata;
+  total: number;
 }
 
 export interface CreateQuizResponse {
@@ -1052,19 +1076,46 @@ export interface CreateQuizResponse {
 }
 
 /**
- * Real Quizzes API: GET /quizzes
+ * Real Trainer Quizzes API: GET /api/trainer/quizzes
+ * Scoped to trainer's authorized quizzes with dynamic combinable filters, search, and pagination.
+ */
+export async function getTrainerQuizzesApi(
+  params?: TrainerQuizFilterParams
+): Promise<TrainerQuizzesResult> {
+  const cleanParams: Record<string, string | number> = {};
+  if (params) {
+    if (params.page && params.page > 0) cleanParams.page = params.page;
+    if (params.limit && params.limit > 0) cleanParams.limit = params.limit;
+    if (params.batchId && params.batchId !== 'all') cleanParams.batchId = params.batchId;
+    if (params.courseId && params.courseId !== 'all' && params.courseId !== 'none') cleanParams.courseId = params.courseId;
+    if (params.moduleId && params.moduleId !== 'all') cleanParams.moduleId = params.moduleId;
+    if (params.status && params.status !== 'all') cleanParams.status = params.status;
+    if (params.search && params.search.trim()) cleanParams.search = params.search.trim();
+  }
+
+  const response = await api.get<QuizzesResponse>("/api/trainer/quizzes", {
+    params: Object.keys(cleanParams).length > 0 ? cleanParams : undefined
+  });
+
+  const quizzes = response.data?.data || response.data?.quizzes || [];
+  const pagination = response.data?.pagination;
+  const total = pagination?.total ?? quizzes.length;
+
+  return { quizzes, pagination, total };
+}
+
+/**
+ * Real Quizzes API: GET /quizzes / /api/trainer/quizzes
  * Scoped to trainer's authorized quizzes or optional filters.
  */
-export async function getQuizzesApi(params?: {
-  courseId?: string;
-  batchId?: string;
-  moduleId?: string;
-  status?: string;
-}): Promise<BackendQuizItem[]> {
-  const response = await api.get<QuizzesResponse>("/quizzes", {
-    params: params ?? undefined
-  });
-  return response.data?.quizzes || [];
+export async function getQuizzesApi(
+  params?: TrainerQuizFilterParams
+): Promise<BackendQuizItem[] & { pagination?: PaginationMetadata; total?: number }> {
+  const result = await getTrainerQuizzesApi(params);
+  const arr = [...result.quizzes] as BackendQuizItem[] & { pagination?: PaginationMetadata; total?: number };
+  arr.pagination = result.pagination;
+  arr.total = result.total;
+  return arr;
 }
 
 /**
