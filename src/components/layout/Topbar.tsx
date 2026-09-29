@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { useLocation, Link, useNavigate } from "react-router-dom";
 import {
   Bell,
@@ -42,18 +43,42 @@ export default function Topbar({ toggleSidebar }: TopbarProps) {
   const navigate = useNavigate();
   const { traineesNeedingSupport, atRiskCount, loading } = useTrainerDashboard();
 
+  const [loadedTraineeName, setLoadedTraineeName] = useState<string>("");
+
+  useEffect(() => {
+    const handleTraineeLoaded = (e: any) => {
+      if (e?.detail?.name) {
+        setLoadedTraineeName(e.detail.name);
+      }
+    };
+    window.addEventListener("lms:trainee-loaded", handleTraineeLoaded);
+    return () => {
+      window.removeEventListener("lms:trainee-loaded", handleTraineeLoaded);
+    };
+  }, []);
+
   const segments = location.pathname.split("/").filter(Boolean);
-  const crumbs = segments.length === 0 ? ["Dashboard"] : segments.map((s) => LABELS[s] ?? s);
+  const crumbs = segments.length === 0
+    ? ["Dashboard"]
+    : segments.map((s, idx) => {
+        if (segments[0] === "trainees" && idx === 1) {
+          const stateName = (location.state as any)?.traineeName;
+          const dashboardTrainee = traineesNeedingSupport.find((t) => t.id === s);
+          const cachedName = typeof window !== "undefined" ? sessionStorage.getItem(`trainee_name_${s}`) : null;
+          return stateName || loadedTraineeName || dashboardTrainee?.name || cachedName || "Trainee Profile";
+        }
+        if (/^[0-9a-fA-F-]{36}$/.test(s) || /^cid-/.test(s)) {
+          return "Details";
+        }
+        return LABELS[s] ?? s;
+      });
 
   const handleTraineeClick = (trainee: DashboardTraineeSupport) => {
-    navigate("/trainees", {
-      state: {
-        traineeId: trainee.id,
-        search: trainee.name,
-        batchId: trainee.batchId,
-        riskOnly: true,
-      },
-    });
+    const query = trainee.batchId ? `?batchId=${encodeURIComponent(trainee.batchId)}` : "";
+    if (typeof window !== "undefined" && trainee.name) {
+      sessionStorage.setItem(`trainee_name_${trainee.id}`, trainee.name);
+    }
+    navigate(`/trainees/${trainee.id}${query}`, { state: { traineeName: trainee.name } });
   };
 
   return (

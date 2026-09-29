@@ -1,4 +1,5 @@
 import { api } from "@/services/api";
+import { store } from "@/store/store";
 
 export interface BatchEvent {
   id?: string;
@@ -26,14 +27,8 @@ export interface BatchEventApiResponse {
  */
 export const fetchBatchEventsForTraineeApi = async (batchId?: string): Promise<BatchEvent[]> => {
   try {
-    let role = "";
-    try {
-      const stored = localStorage.getItem("teqcertify_user");
-      if (stored) {
-        const u = JSON.parse(stored);
-        role = (u.role || u.roleName || "").toUpperCase();
-      }
-    } catch {}
+    const currentUser = store.getState().auth.user;
+    const role = (currentUser?.role || "").toUpperCase();
 
     const isTrainee = role === "TRAINEE" || (role !== "ADMIN" && role !== "TRAINER");
 

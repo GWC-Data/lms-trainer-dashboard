@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Layers,
@@ -18,8 +18,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
-import { getTrainerCoursesApi, TrainerCourseItem } from "@/services/api";
+import {
+  getTrainerCoursesApi,
+  getTrainerFiltersApi,
+  TrainerCourseItem,
+  CourseFilterItem,
+  BatchFilterItem,
+  PaginationMetadata,
+} from "@/services/api";
 import PageLoader from "@/components/ui/PageLoader";
+import Pagination from "@/components/ui/Pagination";
 
 import img1 from "@/assets/1.png";
 import img2 from "@/assets/2.png";
@@ -123,7 +131,6 @@ function getCourseSubtitle(c: TrainerCourseItem): string {
   if (c.description && c.description.trim()) {
     return c.description.trim();
   }
-  const name = (c.name || "").toLowerCase();
   return "Comprehensive training program covering core concepts and hands-on skills";
 }
 
@@ -132,87 +139,118 @@ export default function MyCourses() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Search and Filter States
+  // Dropdown filter options loaded once via cached API
+  const [filterCourses, setFilterCourses] = useState<CourseFilterItem[]>([]);
+  const [filterBatches, setFilterBatches] = useState<BatchFilterItem[]>([]);
+
+  // Search, Filter, and Pagination States
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedCourseFilter, setSelectedCourseFilter] = useState("all");
   const [selectedBatchFilter, setSelectedBatchFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const limit = 6;
+  const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
 
-  const fetchCourses = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const res = await getTrainerCoursesApi();
-      if (res.success && Array.isArray(res.courses)) {
-        setCourses(res.courses);
-      } else {
-        setCourses([]);
+  const isFirstMountRef = useRef(true);
+
+  // 1. Load dropdown filter options once
+  useEffect(() => {
+    getTrainerFiltersApi()
+      .then((data) => {
+        setFilterCourses(data?.courses || []);
+        setFilterBatches(data?.batches || []);
+      })
+      .catch((err) => console.error("Failed to load course/batch filter options:", err));
+  }, []);
+
+  // 2. Debounce search query and reset page to 1
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Compute available batches for the dropdown based on selected course
+  const availableBatches = useMemo(() => {
+    if (selectedCourseFilter === "all") return filterBatches;
+    return filterBatches.filter((b) => b.courseId === selectedCourseFilter);
+  }, [filterBatches, selectedCourseFilter]);
+
+  const handleCourseChange = (newCourseId: string) => {
+    setPage(1);
+    setSelectedCourseFilter(newCourseId);
+    if (newCourseId !== "all" && selectedBatchFilter !== "all") {
+      const batchExists = filterBatches.some(
+        (b) => b.id === selectedBatchFilter && b.courseId === newCourseId
+      );
+      if (!batchExists) {
+        setSelectedBatchFilter("all");
       }
-    } catch (err: any) {
-      console.error("Failed to load trainer courses:", err);
-      setError(err?.response?.data?.message || "Failed to load assigned courses. Please try again.");
-    } finally {
-      setLoading(false);
     }
   };
 
+  const handleBatchChange = (newBatchId: string) => {
+    setPage(1);
+    setSelectedBatchFilter(newBatchId);
+    if (newBatchId !== "all") {
+      const parentBatch = filterBatches.find((b) => b.id === newBatchId);
+      if (parentBatch?.courseId) {
+        setSelectedCourseFilter(parentBatch.courseId);
+      }
+    }
+  };
+
+  // 3. Fetch courses from backend with server-side search, filters, and pagination
+  const fetchCourses = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await getTrainerCoursesApi({
+        page,
+        limit,
+        search: debouncedSearch.trim() || undefined,
+        courseId: selectedCourseFilter !== "all" ? selectedCourseFilter : undefined,
+        batchId: selectedBatchFilter !== "all" ? selectedBatchFilter : undefined,
+      });
+      if (res.success && Array.isArray(res.courses)) {
+        setCourses(res.courses);
+        if (res.pagination) {
+          setPagination(res.pagination);
+        }
+      } else {
+        setCourses([]);
+      }
+    } catch (err: unknown) {
+      console.error("Failed to load trainer courses:", err);
+      setError((err as { response?: { data?: { message?: string } } })?.response?.data?.message || "Failed to load assigned courses. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, [page, limit, debouncedSearch, selectedCourseFilter, selectedBatchFilter]);
+
   useEffect(() => {
     fetchCourses();
-  }, []);
-
-  // Compute all unique batches across all courses for the filter dropdown
-  const allBatches = useMemo(() => {
-    const map = new Map<string, { id: string; name: string }>();
-    courses.forEach((c) => {
-      (c.batches || []).forEach((b) => {
-        if (b.id && !map.has(b.id)) {
-          map.set(b.id, { id: b.id, name: b.label || b.name || "Batch" });
-        }
-      });
-    });
-    return Array.from(map.values());
-  }, [courses]);
-
-  // Filtered courses based on search query, course filter, and batch filter
-  const filteredCourses = useMemo(() => {
-    return courses.filter((c) => {
-      // 1. Course Filter
-      if (selectedCourseFilter !== "all" && c.id !== selectedCourseFilter) {
-        return false;
-      }
-      // 2. Batch Filter
-      if (selectedBatchFilter !== "all") {
-        const hasBatch = (c.batches || []).some((b) => b.id === selectedBatchFilter);
-        if (!hasBatch) return false;
-      }
-      // 3. Search Query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const cleanName = cleanCourseTitle(c.name).toLowerCase();
-        const matchName = cleanName.includes(q);
-        const matchCode = (c.courseCode || "").toLowerCase().includes(q);
-        const matchDesc = (c.description || "").toLowerCase().includes(q);
-        const matchBatch = (c.batches || []).some(
-          (b) =>
-            (b.label || "").toLowerCase().includes(q) ||
-            (b.name || "").toLowerCase().includes(q)
-        );
-        if (!matchName && !matchCode && !matchDesc && !matchBatch) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }, [courses, selectedCourseFilter, selectedBatchFilter, searchQuery]);
+  }, [fetchCourses]);
 
   const hasActiveFilters =
     Boolean(searchQuery.trim()) ||
     selectedCourseFilter !== "all" ||
-    selectedBatchFilter !== "all";
+    selectedBatchFilter !== "all" ||
+    page > 1;
 
   const resetFilters = () => {
     setSearchQuery("");
+    setDebouncedSearch("");
     setSelectedCourseFilter("all");
     setSelectedBatchFilter("all");
+    setPage(1);
   };
 
   if (loading && courses.length === 0) {
@@ -248,13 +286,13 @@ export default function MyCourses() {
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Course Filter */}
           <div className="w-[180px]">
-            <Select value={selectedCourseFilter} onValueChange={setSelectedCourseFilter}>
+            <Select value={selectedCourseFilter} onValueChange={handleCourseChange}>
               <SelectTrigger className="h-9 rounded-xl border-[#F0EAE6] bg-[#FFFBF9] text-xs font-medium text-[#233047] hover:border-[#DE896A]/40 focus:ring-[#DE896A]/20">
                 <SelectValue placeholder="Filter by Course" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Courses ({courses.length})</SelectItem>
-                {courses.map((c) => (
+                <SelectItem value="all">All Courses ({filterCourses.length})</SelectItem>
+                {filterCourses.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {cleanCourseTitle(c.name)}
                   </SelectItem>
@@ -265,13 +303,13 @@ export default function MyCourses() {
 
           {/* Batch Filter */}
           <div className="w-[180px]">
-            <Select value={selectedBatchFilter} onValueChange={setSelectedBatchFilter}>
+            <Select value={selectedBatchFilter} onValueChange={handleBatchChange}>
               <SelectTrigger className="h-9 rounded-xl border-[#F0EAE6] bg-[#FFFBF9] text-xs font-medium text-[#233047] hover:border-[#DE896A]/40 focus:ring-[#DE896A]/20">
                 <SelectValue placeholder="Filter by Batch" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Batches ({allBatches.length})</SelectItem>
-                {allBatches.map((b) => (
+                <SelectItem value="all">All Batches ({availableBatches.length})</SelectItem>
+                {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
                     {b.name}
                   </SelectItem>
@@ -329,36 +367,39 @@ export default function MyCourses() {
           </div>
         </div>
       ) : courses.length === 0 ? (
-        <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-sm">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
-            <Layers className="h-6 w-6" />
+        hasActiveFilters ? (
+          <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-sm">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
+              <Search className="h-6 w-6" />
+            </div>
+            <h3 className="mt-3 text-base font-bold text-[#233047]">No matching courses found.</h3>
+            <p className="mt-1 text-xs text-[#8C7A70]">
+              Try adjusting your search query or filter options.
+            </p>
+            <div className="mt-4 flex justify-center">
+              <button
+                onClick={resetFilters}
+                className="rounded-xl bg-[#DE896A] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#C87556] transition-colors"
+              >
+                Reset Filters
+              </button>
+            </div>
           </div>
-          <h3 className="mt-3 text-base font-bold text-[#233047]">No assigned courses found.</h3>
-          <p className="mt-1 text-xs text-[#8C7A70]">
-            You have not been assigned to any courses yet. Please contact your system administrator.
-          </p>
-        </div>
-      ) : filteredCourses.length === 0 ? (
-        <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-sm">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
-            <Search className="h-6 w-6" />
+        ) : (
+          <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-sm">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
+              <Layers className="h-6 w-6" />
+            </div>
+            <h3 className="mt-3 text-base font-bold text-[#233047]">No assigned courses found.</h3>
+            <p className="mt-1 text-xs text-[#8C7A70]">
+              You have not been assigned to any courses yet. Please contact your system administrator.
+            </p>
           </div>
-          <h3 className="mt-3 text-base font-bold text-[#233047]">No matching courses found.</h3>
-          <p className="mt-1 text-xs text-[#8C7A70]">
-            Try adjusting your search query or filter options.
-          </p>
-          <div className="mt-4 flex justify-center">
-            <button
-              onClick={resetFilters}
-              className="rounded-xl bg-[#DE896A] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#C87556] transition-colors"
-            >
-              Reset Filters
-            </button>
-          </div>
-        </div>
+        )
       ) : (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          {filteredCourses.map((c, idx) => {
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            {courses.map((c, idx) => {
             const courseBatches = c.batches || [];
             const progress = Number(c.progress || 0);
             const status = getCourseStatus(progress, courseBatches.length);
@@ -459,6 +500,22 @@ export default function MyCourses() {
               </div>
             );
           })}
+          </div>
+
+          {/* Pagination Controls */}
+          {!loading && pagination && pagination.total > 0 && (
+            <Pagination
+              page={page}
+              totalPages={pagination.totalPages}
+              total={pagination.total}
+              limit={limit}
+              hasPreviousPage={pagination.hasPreviousPage}
+              hasNextPage={pagination.hasNextPage}
+              onPageChange={setPage}
+              itemLabel="courses"
+              loading={loading}
+            />
+          )}
         </div>
       )}
     </div>

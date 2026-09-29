@@ -1,5 +1,8 @@
 import axios, { AxiosError } from "axios";
 import { getOrCreateDeviceId } from "@/lib/deviceId";
+import { extractUserFromToken } from "@/lib/jwt";
+import { store } from "@/store/store";
+import { restoreSessionThunk } from "@/store/authSlice";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
@@ -9,13 +12,9 @@ export const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+  withCredentials: true,
   timeout: 15000,
 });
-
-// Storage keys
-export const TOKEN_STORAGE_KEY = "teqcertify_token";
-export const REFRESH_TOKEN_STORAGE_KEY = "teqcertify_refresh_token";
-export const USER_STORAGE_KEY = "teqcertify_user";
 
 // Public auth endpoints that must never attach or depend on an Authorization Bearer token
 export const PUBLIC_AUTH_PATHS = [
@@ -30,12 +29,6 @@ export const PUBLIC_AUTH_PATHS = [
   "/auth/resend-otp",
 ];
 
-function clearAuthStorage() {
-  localStorage.removeItem(TOKEN_STORAGE_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-  localStorage.removeItem(USER_STORAGE_KEY);
-}
-
 function redirectToLoginIfNeeded() {
   if (
     window.location.pathname !== "/login" &&
@@ -47,19 +40,21 @@ function redirectToLoginIfNeeded() {
   }
 }
 
-// Request interceptor — attach Bearer token if available, EXCEPT for public auth endpoints
+// Request interceptor — attach the Bearer token from the Redux auth store,
+// EXCEPT for public auth endpoints. The access token lives only in memory
+// now (never localStorage); the refresh token lives solely in the httpOnly
+// cookie the browser attaches automatically via withCredentials.
 api.interceptors.request.use(
   (config) => {
     const url = config.url || "";
     const isPublicAuth = PUBLIC_AUTH_PATHS.some((path) => url.includes(path));
 
     if (isPublicAuth) {
-      // Ensure public auth requests never attach or depend on a stale JWT in localStorage
       if (config.headers && "Authorization" in config.headers) {
         delete config.headers.Authorization;
       }
     } else {
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+      const token = store.getState().auth.accessToken;
       if (token && config.headers) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -69,27 +64,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Shared in-flight refresh promise so multiple 401s firing at once (e.g.
-// several widgets fetching in parallel) trigger exactly one refresh call
-// instead of a stampede of redundant ones.
-let refreshInFlight: Promise<string | null> | null = null;
-
-async function performTokenRefresh(): Promise<string | null> {
-  const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-  if (!storedRefreshToken) return null;
-
-  try {
-    const response = await api.post<RefreshTokenResponse>("/auth/refresh-token", {
-      refreshToken: storedRefreshToken,
-    });
-    const { accessToken, refreshToken } = response.data;
-    localStorage.setItem(TOKEN_STORAGE_KEY, accessToken);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshToken);
-    return accessToken;
-  } catch {
-    return null;
-  }
-}
 
 // Response interceptor — on 401, attempt one silent token refresh before
 // falling back to a hard logout/redirect.
@@ -103,25 +77,46 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !isPublicAuth && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
 
-      if (!refreshInFlight) {
-        refreshInFlight = performTokenRefresh().finally(() => {
-          refreshInFlight = null;
-        });
-      }
-      const newAccessToken = await refreshInFlight;
+      const restored = await store.dispatch(restoreSessionThunk()).unwrap();
 
-      if (newAccessToken) {
+      if (restored.status === "authenticated") {
         originalRequest.headers = originalRequest.headers || {};
-        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        originalRequest.headers.Authorization = `Bearer ${restored.accessToken}`;
         return api.request(originalRequest);
       }
 
-      clearAuthStorage();
-      redirectToLoginIfNeeded();
+      // Only a definitive "no" redirects to login — a transient failure to
+      // restore (network blip, 5xx) leaves the user on the current page;
+      // the original 401 just propagates as an error for that one request.
+      if (restored.status === "unauthenticated") {
+        redirectToLoginIfNeeded();
+      }
     }
     return Promise.reject(error);
   }
 );
+
+// Coalesce in-flight concurrent GET requests with identical URL + params
+// to eliminate duplicate network calls (e.g., from React StrictMode double-mounting or multiple widgets)
+const inFlightGetRequests = new Map<string, Promise<any>>();
+
+export function deduplicatedGet<T = any>(url: string, config?: any): Promise<T> {
+  const paramsKey = config?.params ? JSON.stringify(config.params) : "";
+  const key = `${url}?${paramsKey}`;
+
+  if (inFlightGetRequests.has(key)) {
+    return inFlightGetRequests.get(key)!;
+  }
+
+  const promise = api.get<T>(url, config)
+    .then((response) => response.data)
+    .finally(() => {
+      inFlightGetRequests.delete(key);
+    });
+
+  inFlightGetRequests.set(key, promise);
+  return promise;
+}
 
 export interface BackendUser {
   id: string;
@@ -129,8 +124,8 @@ export interface BackendUser {
   lastName: string;
   email: string;
   jobBoardAccess?: string;
-  roleId: string;
-  role: string;
+  roleId?: string;
+  role?: string;
   permissions?: string[];
 }
 
@@ -189,6 +184,7 @@ export interface RefreshTokenResponse {
   accessToken: string;
   refreshToken: string;
   tokenExpiry: number;
+  user?: BackendUser;
 }
 
 export interface DeviceSession {
@@ -229,12 +225,15 @@ export async function loginApi(email: string, password: string): Promise<LoginRe
   });
   const data = response.data;
   const payload = data?.login || data;
+  const accessToken = payload.accessToken || data.accessToken;
+  const rawUser = payload.user || data.user;
+  const user = rawUser && accessToken ? extractUserFromToken(rawUser, accessToken) : rawUser;
   return {
     ...data,
-    accessToken: payload.accessToken || data.accessToken,
+    accessToken,
     refreshToken: payload.refreshToken || data.refreshToken,
     tokenExpiry: payload.tokenExpiry || data.tokenExpiry,
-    user: payload.user || data.user,
+    user,
   };
 }
 
@@ -247,6 +246,9 @@ export async function verifyOtpApi(verificationId: string, otp: string): Promise
     verificationId,
     otp,
   });
+  if (response.data?.accessToken && response.data?.user) {
+    response.data.user = extractUserFromToken(response.data.user, response.data.accessToken);
+  }
   return response.data;
 }
 
@@ -260,20 +262,72 @@ export async function resendOtpApi(verificationId: string): Promise<ResendOtpRes
   return response.data;
 }
 
+// Three outcomes, deliberately distinguished: a definitive "no" (the server
+// affirmatively said the refresh token is invalid/expired/revoked, or there
+// was no session to find) must log the user out, but a transient failure
+// (network blip, timeout, 5xx — e.g. the dev server mid-restart) must NOT:
+// treating those the same means a brief network hiccup during the
+// background proactive-refresh silently logs out a user with a perfectly
+// valid session, which is exactly the "logged out after ~1hr" symptom this
+// type exists to prevent.
+export type SessionRestoreResult =
+  | { status: "authenticated"; accessToken: string; user: BackendUser }
+  | { status: "unauthenticated" }
+  | { status: "unknown" };
+
+// Shared in-flight promise so concurrent callers (several components
+// mounting at once, or the bootstrap restore racing a 401-triggered one)
+// collapse into a single network call — the backend rotates the refresh
+// token cookie on every call, so firing it twice in parallel would have the
+// second request racing the first's just-rotated cookie.
+let restoreInFlight: Promise<SessionRestoreResult> | null = null;
+
 /**
- * Attempts to refresh the access token using the stored refresh token,
- * sharing the same in-flight/dedupe logic the response interceptor uses so
- * a proactive background refresh and a reactive 401-triggered one never
- * race each other into firing twice. Returns the new access token, or null
- * if refreshing failed (revoked/expired refresh token, or none stored).
+ * Attempts to restore a session purely from the httpOnly refresh-token
+ * cookie (sent automatically via withCredentials) — no client-readable
+ * token is ever passed.
  */
-export async function refreshTokenApi(): Promise<string | null> {
-  if (!refreshInFlight) {
-    refreshInFlight = performTokenRefresh().finally(() => {
-      refreshInFlight = null;
-    });
+export async function restoreSessionApi(): Promise<SessionRestoreResult> {
+  if (!restoreInFlight) {
+    restoreInFlight = (async (): Promise<SessionRestoreResult> => {
+      try {
+        const response = await api.post<RefreshTokenResponse>("/auth/refresh-token");
+        const { accessToken } = response.data;
+        let { user } = response.data;
+        if (accessToken && user) {
+          user = extractUserFromToken(user, accessToken);
+        }
+        if (!user) {
+          console.warn("[auth] refresh-token succeeded but response had no user — treating as logged out", response.data);
+          return { status: "unauthenticated" };
+        }
+        return { status: "authenticated", accessToken, user };
+      } catch (err) {
+        // Surfaced so a "logged out after ~1hr" report can be diagnosed from
+        // the browser console instead of guessing.
+        if (err instanceof AxiosError) {
+          console.warn(
+            `[auth] session restore failed: ${err.response?.status ?? "network error"} ${err.response?.data?.errorCode ?? err.code ?? ""}`,
+            err.response?.data ?? err.message
+          );
+          // A response actually came back and explicitly said the refresh
+          // token is invalid/expired/revoked (or malformed) — that's the
+          // only case that should log the user out. Anything else (no
+          // response at all, or a 5xx) is a transient failure to determine
+          // session validity, not proof the session is gone.
+          if (err.response?.status === 401) {
+            return { status: "unauthenticated" };
+          }
+          return { status: "unknown" };
+        }
+        console.warn("[auth] session restore failed with a non-Axios error", err);
+        return { status: "unknown" };
+      } finally {
+        restoreInFlight = null;
+      }
+    })();
   }
-  return refreshInFlight;
+  return restoreInFlight;
 }
 
 /**
@@ -416,28 +470,17 @@ export interface TrainerDashboardResponse {
 
 /**
  * Real Trainer Dashboard API: GET /api/trainer/dashboard
- * Scoped strictly to authenticated trainer via Bearer JWT.
+ * Scoped strictly to authenticated trainer. Returns KPIs and previews only.
  */
 export async function getTrainerDashboardApi(): Promise<TrainerDashboardResponse> {
-  const response = await api.get<TrainerDashboardResponse>("/api/trainer/dashboard");
-  return response.data;
+  return deduplicatedGet<TrainerDashboardResponse>("/api/trainer/dashboard");
 }
 
 /**
- * Real Forgot Password request: POST /auth/forgot-password
+ * Forgot Password API: POST /auth/forgot-password
  */
-export async function forgotPasswordApi(email: string): Promise<ForgotPasswordResponse> {
-  const response = await api.post<ForgotPasswordResponse>(
-    "/auth/forgot-password",
-    {
-      email: email.trim().toLowerCase(),
-    },
-    {
-      headers: {
-        Authorization: undefined,
-      },
-    }
-  );
+export async function forgotPasswordApi(email: string): Promise<{ success: boolean; message: string }> {
+  const response = await api.post<{ success: boolean; message: string }>("/auth/forgot-password", { email });
   return response.data;
 }
 
@@ -494,11 +537,139 @@ export interface TrainerCourseItem {
   batches: TrainerCourseBatch[];
 }
 
+export interface PaginationMetadata {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}
+
+export interface CourseFilterItem {
+  id: string;
+  name: string;
+  courseId?: string;
+  courseName?: string;
+}
+
+export interface BatchFilterItem {
+  id: string;
+  name: string;
+  batchId?: string;
+  batchName?: string;
+  courseId?: string | null;
+  courseName?: string | null;
+  startDate?: string | null;
+}
+
+export interface TrainerFiltersData {
+  courses: CourseFilterItem[];
+  batches: BatchFilterItem[];
+}
+
+export type TrainerFilterCourseItem = CourseFilterItem;
+export type TrainerFilterBatchItem = BatchFilterItem;
+
+export interface TrainerFiltersResponse {
+  success: boolean;
+  statusCode?: number;
+  data: TrainerFiltersData;
+}
+
+export interface FilterResponse<T> {
+  success: boolean;
+  statusCode?: number;
+  data: T[];
+}
+
 export interface TrainerCoursesResponse {
   success: boolean;
   statusCode?: number;
   message?: string;
-  courses: TrainerCourseItem[];
+  data: TrainerCourseItem[];
+  courses?: TrainerCourseItem[];
+  pagination?: PaginationMetadata;
+}
+
+// In-memory cache for trainer filters to ensure only 1 request per session across all pages
+let cachedTrainerFilters: TrainerFiltersData | null = null;
+let trainerFiltersInFlight: Promise<TrainerFiltersData> | null = null;
+
+/**
+ * Combined Trainer Filter API: GET /api/trainer/filters
+ * Returns courses and batches together in a single request.
+ * Cached in memory so changing routes/filters never triggers repeated API requests.
+ */
+export async function getTrainerFiltersApi(forceRefresh = false): Promise<TrainerFiltersData> {
+  if (!forceRefresh && cachedTrainerFilters) {
+    return cachedTrainerFilters;
+  }
+  if (!forceRefresh && trainerFiltersInFlight) {
+    return trainerFiltersInFlight;
+  }
+
+  trainerFiltersInFlight = deduplicatedGet<TrainerFiltersResponse>("/api/trainer/filters")
+    .then((res) => {
+      const data = res?.data || { courses: [], batches: [] };
+      cachedTrainerFilters = data;
+      trainerFiltersInFlight = null;
+      return data;
+    })
+    .catch((err) => {
+      trainerFiltersInFlight = null;
+      throw err;
+    });
+
+  return trainerFiltersInFlight;
+}
+
+export function clearTrainerFiltersCache(): void {
+  cachedTrainerFilters = null;
+  trainerFiltersInFlight = null;
+}
+
+/**
+ * Lightweight Course Filter API: GET /api/trainer/filters/courses
+ * Reuses the combined filter API to avoid redundant network calls.
+ */
+export async function getTrainerCourseFiltersApi(): Promise<CourseFilterItem[]> {
+  const data = await getTrainerFiltersApi();
+  return data.courses;
+}
+
+/**
+ * Lightweight Batch Filter API: GET /api/trainer/filters/batches?courseId=...
+ * Reuses the combined filter API with local courseId filtering to eliminate redundant network requests.
+ */
+export async function getTrainerBatchFiltersApi(courseId?: string): Promise<BatchFilterItem[]> {
+  const data = await getTrainerFiltersApi();
+  if (courseId && courseId !== "all" && courseId !== "ALL") {
+    return data.batches.filter((b) => b.courseId === courseId);
+  }
+  return data.batches;
+}
+
+/**
+ * Real Trainer Courses API: GET /api/trainer/courses
+ * Bearer JWT authenticated. Returns courses scoped strictly to the trainer with pagination.
+ */
+export async function getTrainerCoursesApi(params?: {
+  page?: number;
+  limit?: number;
+  search?: string;
+  courseId?: string;
+  batchId?: string;
+}): Promise<TrainerCoursesResponse> {
+  const res = await deduplicatedGet<TrainerCoursesResponse>("/api/trainer/courses", {
+    params: params ?? undefined
+  });
+  const list = res?.data || (res as any)?.courses || [];
+  return {
+    ...res,
+    data: list,
+    courses: list
+  };
 }
 
 export interface BackendModuleItem {
@@ -531,15 +702,6 @@ export interface CreateModuleResponse {
   message: string;
   moduleId?: string;
   module?: BackendModuleItem;
-}
-
-/**
- * Real Trainer Courses API: GET /api/trainer/courses
- * Bearer JWT authenticated. Returns courses scoped strictly to the trainer.
- */
-export async function getTrainerCoursesApi(): Promise<TrainerCoursesResponse> {
-  const response = await api.get<TrainerCoursesResponse>("/api/trainer/courses");
-  return response.data;
 }
 
 /**
@@ -697,6 +859,7 @@ export interface BackendBatchItem {
     courseImg?: string | null;
     courseLink?: string | null;
   } | null;
+  traineeCount?: number;
   trainees?: any[];
 }
 
@@ -709,29 +872,46 @@ export interface BatchesResponse {
   data?: BackendBatchItem[];
 }
 
+export interface TrainerBatchesResponse {
+  success: boolean;
+  statusCode?: number;
+  message?: string;
+  data: BackendBatchItem[];
+  pagination?: PaginationMetadata;
+}
+
 /**
- * Real Batch API: GET /batches
+ * Real Batch API: GET /api/trainer/batches
  * Scoped to trainer's authorized batches/courses via JWT.
  */
-export async function getTrainerBatchesApi(courseId?: string): Promise<BackendBatchItem[]> {
-  const response = await api.get<BatchesResponse>("/batches", {
-    params: courseId ? { courseId } : undefined
+export async function getTrainerBatchesApi(
+  courseId?: string,
+  params?: { page?: number; limit?: number; search?: string }
+): Promise<BackendBatchItem[]> {
+  const queryParams = {
+    ...(params || {}),
+    ...(courseId ? { courseId } : {})
+  };
+  const response = await deduplicatedGet<any>("/api/trainer/batches", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
-  const list = response.data?.batch?.data || response.data?.data || [];
+  const list = response?.data || response?.batch?.data || [];
   return list;
 }
 
-export async function getBatchesForCourseApi(courseId: string): Promise<BackendBatchItem[]> {
-  return getTrainerBatchesApi(courseId);
+export async function getTrainerBatchesPaginatedApi(params?: {
+  courseId?: string;
+  mode?: string;
+  page?: number;
+  limit?: number;
+  search?: string;
+}): Promise<TrainerBatchesResponse> {
+  return deduplicatedGet<TrainerBatchesResponse>("/api/trainer/batches", {
+    params: params ?? undefined
+  });
 }
 
-/**
- * Real Batch Details API: GET /batches/:id
- */
-export async function getBatchDetailsApi(batchId: string): Promise<any> {
-  const response = await api.get<{ message: string; batch: any }>(`/batches/${batchId}`);
-  return response.data?.batch;
-}
+
 
 // ─── Lessons for Module ───────────────────────────────────────────────────────
 
@@ -863,10 +1043,29 @@ export interface BackendQuizItem {
   totalTrainees?: number;
 }
 
+export interface TrainerQuizFilterParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  batchId?: string;
+  courseId?: string;
+  moduleId?: string;
+  status?: string;
+}
+
 export interface QuizzesResponse {
   success: boolean;
+  statusCode?: number;
   message?: string;
+  data?: BackendQuizItem[];
   quizzes: BackendQuizItem[];
+  pagination?: PaginationMetadata;
+}
+
+export interface TrainerQuizzesResult {
+  quizzes: BackendQuizItem[];
+  pagination?: PaginationMetadata;
+  total: number;
 }
 
 export interface CreateQuizResponse {
@@ -877,19 +1076,46 @@ export interface CreateQuizResponse {
 }
 
 /**
- * Real Quizzes API: GET /quizzes
+ * Real Trainer Quizzes API: GET /api/trainer/quizzes
+ * Scoped to trainer's authorized quizzes with dynamic combinable filters, search, and pagination.
+ */
+export async function getTrainerQuizzesApi(
+  params?: TrainerQuizFilterParams
+): Promise<TrainerQuizzesResult> {
+  const cleanParams: Record<string, string | number> = {};
+  if (params) {
+    if (params.page && params.page > 0) cleanParams.page = params.page;
+    if (params.limit && params.limit > 0) cleanParams.limit = params.limit;
+    if (params.batchId && params.batchId !== 'all') cleanParams.batchId = params.batchId;
+    if (params.courseId && params.courseId !== 'all' && params.courseId !== 'none') cleanParams.courseId = params.courseId;
+    if (params.moduleId && params.moduleId !== 'all') cleanParams.moduleId = params.moduleId;
+    if (params.status && params.status !== 'all') cleanParams.status = params.status;
+    if (params.search && params.search.trim()) cleanParams.search = params.search.trim();
+  }
+
+  const response = await api.get<QuizzesResponse>("/api/trainer/quizzes", {
+    params: Object.keys(cleanParams).length > 0 ? cleanParams : undefined
+  });
+
+  const quizzes = response.data?.data || response.data?.quizzes || [];
+  const pagination = response.data?.pagination;
+  const total = pagination?.total ?? quizzes.length;
+
+  return { quizzes, pagination, total };
+}
+
+/**
+ * Real Quizzes API: GET /quizzes / /api/trainer/quizzes
  * Scoped to trainer's authorized quizzes or optional filters.
  */
-export async function getQuizzesApi(params?: {
-  courseId?: string;
-  batchId?: string;
-  moduleId?: string;
-  status?: string;
-}): Promise<BackendQuizItem[]> {
-  const response = await api.get<QuizzesResponse>("/quizzes", {
-    params: params ?? undefined
-  });
-  return response.data?.quizzes || [];
+export async function getQuizzesApi(
+  params?: TrainerQuizFilterParams
+): Promise<BackendQuizItem[] & { pagination?: PaginationMetadata; total?: number }> {
+  const result = await getTrainerQuizzesApi(params);
+  const arr = [...result.quizzes] as BackendQuizItem[] & { pagination?: PaginationMetadata; total?: number };
+  arr.pagination = result.pagination;
+  arr.total = result.total;
+  return arr;
 }
 
 /**
@@ -978,15 +1204,8 @@ export interface QuizResultsResponse {
  */
 export async function getQuizResultsApi(quizId: string): Promise<QuizResultsResponse> {
   const cleanId = quizId.trim();
-  try {
-    const response = await api.get<QuizResultsResponse>(`/quizzes/${encodeURIComponent(cleanId)}/results`);
-    return response.data;
-  } catch (err: any) {
-    const response = await api.get<QuizResultsResponse>("/assessment-results", {
-      params: { assessmentId: cleanId }
-    });
-    return response.data;
-  }
+  const response = await api.get<QuizResultsResponse>(`/quizzes/${encodeURIComponent(cleanId)}/results`);
+  return response.data;
 }
 
 
@@ -1113,18 +1332,18 @@ export async function getAssignmentsApi(params?: {
   courseId?: string;
   batchId?: string;
 }): Promise<AssignmentItem[]> {
-  const response = await api.get<AssignmentsResponse>("/assignments", {
+  const data = await deduplicatedGet<AssignmentsResponse>("/assignments", {
     params: params ?? undefined
   });
-  return response.data?.assignments || [];
+  return data?.assignments || [];
 }
 
 /**
  * Real Single Assignment API: GET /assignments/:id
  */
 export async function getAssignmentByIdApi(id: string): Promise<AssignmentItem | null> {
-  const response = await api.get<{ success: boolean; assignment: AssignmentItem }>(`/assignments/${id}`);
-  return response.data?.assignment || null;
+  const data = await deduplicatedGet<{ success: boolean; assignment: AssignmentItem }>(`/assignments/${id}`);
+  return data?.assignment || null;
 }
 
 /**
@@ -1147,8 +1366,8 @@ export async function deleteAssignmentApi(id: string): Promise<{ success: boolea
  * Real Assignment Submissions API: GET /assignments/:assignmentId/submissions
  */
 export async function getAssignmentSubmissionsApi(assignmentId: string): Promise<AssignmentSubmissionItem[]> {
-  const response = await api.get<SubmissionsResponse>(`/assignments/${assignmentId}/submissions`);
-  return response.data?.submissions || [];
+  const data = await deduplicatedGet<SubmissionsResponse>(`/assignments/${assignmentId}/submissions`);
+  return data?.submissions || [];
 }
 
 /**
@@ -1202,8 +1421,15 @@ export interface TraineeListItem {
   courseName: string;
   mode: string;
   progressPct: number;
-  completedLessons: number;
-  totalLessons: number;
+  completedModules: number;
+  totalModules: number;
+  moduleCompletion?: {
+    completed: number;
+    total: number;
+    percentage: number;
+  };
+  completedLessons?: number;
+  totalLessons?: number;
   quizCompleted: number;
   quizAvgScore: number;
   attendancePct: number;
@@ -1218,14 +1444,11 @@ export interface TraineeListItem {
 export interface TraineesApiResponse {
   success: boolean;
   message?: string;
+  pagination?: PaginationMetadata;
+  trainees?: TraineeListItem[];
   data: {
     trainees: TraineeListItem[];
-    pagination: {
-      page: number;
-      limit: number;
-      total: number;
-      totalPages: number;
-    };
+    pagination?: PaginationMetadata;
   };
 }
 
@@ -1235,20 +1458,31 @@ export async function getTraineesApi(params?: {
   search?: string;
   mode?: string;
   atRisk?: boolean;
+  riskOnly?: boolean;
   page?: number;
   limit?: number;
 }): Promise<TraineesApiResponse> {
-  const response = await api.get<any>("/api/trainees", {
-    params: params ?? undefined
+  const queryParams: any = { ...(params || {}) };
+  if (queryParams.riskOnly === undefined && queryParams.atRisk !== undefined) {
+    queryParams.riskOnly = queryParams.atRisk;
+  }
+  const resData = await deduplicatedGet<any>("/api/trainer/trainees", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
-  const resData = response.data;
-  const rawList = resData?.data?.trainees || resData?.trainees || [];
+  const rawList = resData?.data?.trainees || resData?.data || resData?.trainees || [];
   const normalizedList: TraineeListItem[] = rawList.map((t: any) => {
     const fullName = t.name || t.fullName || (t.firstName || t.lastName ? `${t.firstName || ''} ${t.lastName || ''}`.trim() : 'Trainee');
     const bId = t.batchId || t.batch?.batchId || '';
     const bName = t.batchName || t.batch?.batchName || '';
     const cId = t.courseId || t.course?.courseId || '';
     const cName = t.courseName || t.course?.courseName || '';
+    const progressPct = Number(t.progressPct ?? t.moduleCompletion?.percentage ?? t.lessonCompletion?.percentage ?? 0);
+    const totalModules = Number(t.totalModules ?? t.moduleCompletion?.total ?? 0);
+    const completedModules = Number(
+      t.completedModules ??
+      t.moduleCompletion?.completed ??
+      (totalModules > 0 ? Math.round((progressPct / 100) * totalModules) : 0)
+    );
 
     return {
       id: t.id || t.traineeId || '',
@@ -1259,9 +1493,16 @@ export async function getTraineesApi(params?: {
       courseId: cId,
       courseName: cName,
       mode: t.mode || t.batch?.mode || 'online',
-      progressPct: Number(t.progressPct ?? t.lessonCompletion?.percentage ?? 0),
-      completedLessons: Number(t.completedLessons ?? t.lessonCompletion?.completed ?? 0),
-      totalLessons: Number(t.totalLessons ?? t.lessonCompletion?.total ?? 0),
+      progressPct,
+      completedModules,
+      totalModules,
+      moduleCompletion: t.moduleCompletion || {
+        completed: completedModules,
+        total: totalModules,
+        percentage: progressPct
+      },
+      completedLessons: Number(t.completedLessons ?? t.lessonCompletion?.completed ?? completedModules),
+      totalLessons: Number(t.totalLessons ?? t.lessonCompletion?.total ?? totalModules),
       quizCompleted: Number(t.quizCompleted ?? t.quiz?.completed ?? 0),
       quizAvgScore: Number(t.quizAvgScore ?? t.quiz?.averageScore ?? 0),
       attendancePct: Number(t.attendancePct ?? t.attendance?.percentage ?? 0),
@@ -1277,16 +1518,82 @@ export async function getTraineesApi(params?: {
 
   return {
     ...resData,
+    pagination: resData?.pagination,
     data: {
       ...resData?.data,
-      trainees: normalizedList
+      trainees: normalizedList,
+      pagination: resData?.pagination
     }
   };
 }
 
-export async function getTraineeDetailsApi(traineeId: string): Promise<any> {
-  const response = await api.get(`/api/trainees/${traineeId}/details`);
-  return response.data;
+export interface TraineeDetailData {
+  trainee: {
+    id: string;
+    name: string;
+    email: string;
+    status: string;
+  };
+  batch: {
+    id: string;
+    name: string;
+  };
+  course: {
+    id: string;
+    name: string;
+  };
+  progress: {
+    completed: number;
+    total: number;
+    percentage: number;
+  };
+  quiz: {
+    score: number;
+  };
+  attendance: {
+    percentage: number;
+  };
+  risk: {
+    isAtRisk: boolean;
+    reason: string | null;
+  };
+  id?: string;
+  name?: string;
+  email?: string;
+  status?: string;
+  batchId?: string;
+  batchName?: string;
+  courseId?: string;
+  courseName?: string;
+  progressPct?: number;
+  completedModules?: number;
+  totalModules?: number;
+  attendancePct?: number;
+  quizScore?: number;
+  isAtRisk?: boolean;
+  riskReason?: string | null;
+}
+
+export async function getTraineeDetailsApi(traineeId: string, batchId?: string): Promise<{ success: boolean; data?: TraineeDetailData }> {
+  return deduplicatedGet<{ success: boolean; data?: TraineeDetailData }>(`/api/trainer/trainees/${traineeId}`, {
+    params: batchId ? { batchId } : undefined
+  });
+}
+
+/**
+ * Real Trainer Schedule API: GET /api/trainer/schedule
+ * Unpaginated date-range based fetching.
+ */
+export async function getTrainerScheduleApi(params?: {
+  startDate?: string;
+  endDate?: string;
+  batchId?: string;
+  courseId?: string;
+}): Promise<any> {
+  const response = await deduplicatedGet<any>("/api/trainer/schedule", {
+    params: params ?? undefined
+  });
+  return response;
 }
 
 // ─── Attendance API ──────────────────────────────────────────────────────────
@@ -1334,19 +1641,37 @@ export async function markAttendanceApi(payload: MarkAttendancePayload): Promise
   return response.data;
 }
 
-export async function getAttendanceByBatchApi(batchId?: string, courseId?: string, date?: string): Promise<any> {
-  const params: Record<string, string> = { limit: "1000" };
-  if (batchId && batchId !== "all") {
-    params.batchId = batchId;
-  }
-  if (courseId && courseId !== "all" && courseId !== "none") {
-    params.courseId = courseId;
-  }
-  if (date && date !== "all") {
-    params.attendanceDate = date;
-  }
-  const response = await api.get<any>("/attendance", { params });
-  return response.data;
+
+export interface TrainerAttendanceItem {
+  id?: string | null;
+  traineeId: string;
+  traineeName: string;
+  email?: string | null;
+  batchId: string;
+  batchName: string;
+  courseName: string;
+  date: string;
+  status: "present" | "absent" | "late" | null;
+  percentage?: number | null;
+}
+
+export async function getTrainerAttendanceApi(params?: {
+  batchId?: string;
+  courseId?: string;
+  date?: string;
+  page?: number;
+  limit?: number;
+}): Promise<TrainerAttendanceItem[]> {
+  const queryParams: Record<string, string | number> = {};
+  if (params?.batchId && params.batchId !== "all") queryParams.batchId = params.batchId;
+  if (params?.courseId && params.courseId !== "all" && params.courseId !== "none") queryParams.courseId = params.courseId;
+  if (params?.date && params.date !== "all") queryParams.date = params.date;
+  if (params?.page) queryParams.page = params.page;
+  if (params?.limit) queryParams.limit = params.limit;
+  const res = await deduplicatedGet<any>("/api/trainer/attendance", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
+  });
+  return res?.data || [];
 }
 
 export * from "./batchEventApi";

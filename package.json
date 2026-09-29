@@ -81,6 +81,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "@playwright/test": "^1.63.0",
     "@types/d3": "^7.4.3",
     "@types/datatables.net": "^1.10.28",
     "@types/jest": "^29.5.14",

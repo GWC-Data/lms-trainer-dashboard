@@ -9,6 +9,8 @@ interface FileDropzoneProps {
   onFileSelected: (file: File) => void;
   hint?: string;
   error?: string;
+  onError?: (err: string) => void;
+  maxSize?: number;
 }
 
 export function formatFileSize(bytes: number): string {
@@ -16,17 +18,56 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function FileDropzone({ accept, file, onFileSelected, hint, error }: FileDropzoneProps) {
+export default function FileDropzone({
+  accept,
+  file,
+  onFileSelected,
+  hint,
+  error,
+  onError,
+  maxSize = 50 * 1024 * 1024,
+}: FileDropzoneProps) {
   const onDrop = useCallback(
-    (accepted: File[]) => {
-      if (accepted[0]) onFileSelected(accepted[0]);
+    (accepted: File[], rejected: any[]) => {
+      if (accepted && accepted[0]) {
+        if (onError) onError("");
+        onFileSelected(accepted[0]);
+        return;
+      }
+      if (rejected && rejected[0]) {
+        const rej = rejected[0];
+        const isSizeErr = rej.errors?.some((e: any) => e.code === "file-too-large");
+        if (isSizeErr) {
+          const msg = `File size exceeds the allowed limit (${formatFileSize(maxSize)}).`;
+          if (onError) onError(msg);
+          return;
+        }
+
+        // Check if the rejected file actually has an accepted extension (e.g. browser mime quirks on Windows)
+        const ext = `.${rej.file?.name?.split(".").pop()?.toLowerCase()}`;
+        const acceptedExtensions = accept
+          ? Object.values(accept).flat().map((e) => e.toLowerCase())
+          : [];
+
+        if (acceptedExtensions.includes(ext) && (rej.file?.size || 0) <= maxSize) {
+          if (onError) onError("");
+          onFileSelected(rej.file);
+          return;
+        }
+
+        const msg =
+          rej.errors?.[0]?.message ||
+          "Unsupported file format. Please upload PDF, Word, PowerPoint, Excel, or Text.";
+        if (onError) onError(msg);
+      }
     },
-    [onFileSelected]
+    [onFileSelected, onError, maxSize, accept]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept,
+    maxSize,
     multiple: false,
   });
 

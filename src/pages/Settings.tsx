@@ -129,9 +129,16 @@ export default function Settings() {
                           <Badge tone="green">This device</Badge>
                         )}
                       </div>
+                      {device.ipAddress ? (
+                        <p className="text-xs text-[#8C7A70] mt-0.5">
+                          IP Address: <span className="font-medium text-[#3A2A22]">{device.ipAddress}</span>
+                        </p>
+                      ) : null}
+                      <p className="text-xs text-[#8C7A70] mt-0.5">
+                        Last active: {formatRelativeTime(device.lastActiveAt)}
+                      </p>
                       <p className="text-xs text-[#8C7A70]">
-                        Last active {formatRelativeTime(device.lastActiveAt)} · Signed in{" "}
-                        {formatRelativeTime(device.createdAt)}
+                        Signed in {formatRelativeTime(device.createdAt)}
                       </p>
                     </div>
                   </div>

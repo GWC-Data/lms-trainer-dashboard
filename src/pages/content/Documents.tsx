@@ -34,12 +34,11 @@ import { triggerDownload } from "@/lib/utils";
 import { formatFileSize } from "@/components/ui/FileDropzone";
 import {
   getDocumentsApi,
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerFiltersApi,
   deleteDocumentApi,
   type BackendDocumentItem,
-  type BackendBatchItem,
-  type TrainerCourseItem,
+  type BatchFilterItem,
+  type CourseFilterItem,
 } from "@/services/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -87,8 +86,8 @@ export default function Documents() {
   const urlSearch = searchParams.get("search") || "";
 
   // Reference data
-  const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [batches, setBatches] = useState<BatchFilterItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [loadingRef, setLoadingRef] = useState(true);
 
   // Filters
@@ -104,7 +103,7 @@ export default function Documents() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Parallel Load: Batches & Courses
+  // 1. Parallel Load: Lightweight Batches & Courses Filters (Once on mount)
   // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
@@ -112,32 +111,26 @@ export default function Documents() {
     async function loadReferenceData() {
       try {
         setLoadingRef(true);
-        const [batchesRes, coursesRes] = await Promise.all([
-          getTrainerBatchesApi().catch((err) => {
-            console.warn("Failed to load trainer batches:", err);
-            return [] as BackendBatchItem[];
-          }),
-          getTrainerCoursesApi().catch((err) => {
-            console.warn("Failed to load trainer courses:", err);
-            return { courses: [] as TrainerCourseItem[] };
-          }),
-        ]);
+        const { courses: coursesRes, batches: batchesRes } = await getTrainerFiltersApi().catch((err) => {
+          console.warn("Failed to load trainer filters:", err);
+          return { courses: [] as CourseFilterItem[], batches: [] as BatchFilterItem[] };
+        });
 
         if (!mounted) return;
 
         setBatches(batchesRes);
-        setCourses(coursesRes?.courses || []);
+        setCourses(coursesRes);
 
         if (urlBatchId && batchesRes.some((b) => b.id === urlBatchId)) {
           setSelectedBatchId(urlBatchId);
           const found = batchesRes.find((b) => b.id === urlBatchId);
-          const targetCourseId = found?.courseId || found?.course?.id;
+          const targetCourseId = found?.courseId;
           if (targetCourseId) {
             setSelectedCourseId(targetCourseId);
           } else {
             setSelectedCourseId("none");
           }
-        } else if (urlCourseId && (coursesRes?.courses || []).some((c) => c.id === urlCourseId)) {
+        } else if (urlCourseId && coursesRes.some((c) => c.id === urlCourseId)) {
           setSelectedCourseId(urlCourseId);
           setSelectedBatchId("all");
         }
@@ -152,12 +145,34 @@ export default function Documents() {
     return () => {
       mounted = false;
     };
-  }, [urlBatchId, urlCourseId]);
+  }, []);
 
   // Sync search input when URL changes
   useEffect(() => {
     setSearchQuery(urlSearch);
   }, [urlSearch]);
+
+  // Sync selected course when URL courseId changes
+  useEffect(() => {
+    if (!loadingRef) {
+      if (urlCourseId && courses.some((c) => c.id === urlCourseId)) {
+        setSelectedCourseId(urlCourseId);
+      } else if (!urlCourseId) {
+        setSelectedCourseId("all");
+      }
+    }
+  }, [urlCourseId, loadingRef, courses]);
+
+  // Sync selected batch when URL batchId changes
+  useEffect(() => {
+    if (!loadingRef) {
+      if (urlBatchId && batches.some((b) => b.id === urlBatchId)) {
+        setSelectedBatchId(urlBatchId);
+      } else if (!urlBatchId) {
+        setSelectedBatchId("all");
+      }
+    }
+  }, [urlBatchId, loadingRef, batches]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 2. Canonical Batch → Course Resolution
@@ -169,27 +184,26 @@ export default function Documents() {
 
   const selectedCourse = useMemo(() => {
     if (selectedCourseId === "all" || selectedCourseId === "none") return null;
-    return (
-      courses.find((c) => c.id === selectedCourseId) ||
-      (selectedBatch?.course?.courseName
-        ? {
-            id: selectedCourseId,
-            courseName: selectedBatch.course.courseName,
-          }
-        : null)
-    );
-  }, [courses, selectedCourseId, selectedBatch]);
+    return courses.find((c) => c.id === selectedCourseId) || null;
+  }, [courses, selectedCourseId]);
 
   const batchResolvedCourseName = useMemo(() => {
     if (!selectedBatch) return null;
-    if (selectedBatch.course?.courseName) return cleanDisplayString(selectedBatch.course.courseName);
-    const targetCourseId = selectedBatch.courseId || selectedBatch.course?.id;
+    const targetCourseId = selectedBatch.courseId;
     if (targetCourseId) {
       const match = courses.find((c) => c.id === targetCourseId);
-      if (match?.courseName) return cleanDisplayString(match.courseName);
+      if (match?.name) return cleanDisplayString(match.name);
     }
     return null;
   }, [selectedBatch, courses]);
+
+  // Dynamically filter available batches by selected course locally
+  const availableBatches = useMemo(() => {
+    if (selectedCourseId === "all" || selectedCourseId === "none" || !selectedCourseId) {
+      return batches;
+    }
+    return batches.filter((b) => b.courseId === selectedCourseId);
+  }, [batches, selectedCourseId]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 3. Fetch Documents
@@ -266,7 +280,7 @@ export default function Documents() {
       });
     } else {
       const found = batches.find((b) => b.id === newBatchId);
-      const targetCourseId = found?.courseId || found?.course?.id;
+      const targetCourseId = found?.courseId;
       if (targetCourseId) {
         setSelectedCourseId(targetCourseId);
         setSearchParams((prev) => {
@@ -276,11 +290,9 @@ export default function Documents() {
           return next;
         });
       } else {
-        setSelectedCourseId("none");
         setSearchParams((prev) => {
           const next = new URLSearchParams(prev);
           next.set("batchId", newBatchId);
-          next.delete("courseId");
           return next;
         });
       }
@@ -288,18 +300,28 @@ export default function Documents() {
   };
 
   const handleCourseChange = (newCourseId: string) => {
-    if (selectedBatchId === "all") {
-      setSelectedCourseId(newCourseId);
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        if (newCourseId === "all") {
-          next.delete("courseId");
-        } else {
-          next.set("courseId", newCourseId);
-        }
-        next.delete("batchId");
-        return next;
-      });
+    setSelectedCourseId(newCourseId);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (newCourseId === "all") {
+        next.delete("courseId");
+      } else {
+        next.set("courseId", newCourseId);
+      }
+      return next;
+    });
+
+    // If current batch does not belong to this new course, reset batch to all
+    if (newCourseId !== "all" && newCourseId !== "none" && selectedBatchId !== "all") {
+      const currentBatch = batches.find((b) => b.id === selectedBatchId);
+      if (currentBatch && currentBatch.courseId && currentBatch.courseId !== newCourseId) {
+        setSelectedBatchId("all");
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("batchId");
+          return next;
+        });
+      }
     }
   };
 
@@ -324,13 +346,21 @@ export default function Documents() {
   };
 
   const clearScope = () => {
-    handleClearFilters();
+    setSelectedCourseId("all");
+    setSelectedBatchId("all");
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("courseId");
+      next.delete("batchId");
+      next.delete("moduleId");
+      return next;
+    });
   };
 
   // Context labels
-  const contextCourseName = batchResolvedCourseName || cleanDisplayString(selectedCourse?.courseName || documents[0]?.courseName);
+  const contextCourseName = batchResolvedCourseName || cleanDisplayString(selectedCourse?.name || (selectedCourse as any)?.courseName || documents[0]?.courseName);
   const contextModuleName = cleanDisplayString(documents[0]?.moduleName);
-  const contextBatchName = cleanDisplayString(selectedBatch?.batchName || documents[0]?.batchName);
+  const contextBatchName = cleanDisplayString(selectedBatch?.name || (selectedBatch as any)?.batchName || documents[0]?.batchName);
 
   if ((loading || loadingRef) && documents.length === 0) {
     return <PageLoader />;
@@ -391,16 +421,16 @@ export default function Documents() {
             <Select
               value={selectedBatchId}
               onValueChange={handleBatchChange}
-              disabled={loadingRef || batches.length === 0}
+              disabled={loadingRef || availableBatches.length === 0}
             >
               <SelectTrigger className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-semibold text-[#233047] shadow-xs focus:ring-[#DE896A]/20">
                 <SelectValue placeholder={loadingRef ? "Loading batches..." : "All Batches"} />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Batches</SelectItem>
-                {batches.map((b) => (
+                {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.batchName)}
+                    {cleanDisplayString(b.name || (b as any).batchName)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -412,37 +442,20 @@ export default function Documents() {
             <Select
               value={selectedCourseId}
               onValueChange={handleCourseChange}
-              disabled={selectedBatchId !== "all" || loadingRef}
+              disabled={loadingRef}
             >
               <SelectTrigger
-                className={cn(
-                  "h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-semibold text-[#233047] shadow-xs focus:ring-[#DE896A]/20",
-                  selectedBatchId !== "all" && "bg-gray-50/80 cursor-not-allowed opacity-90"
-                )}
+                className="h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-semibold text-[#233047] shadow-xs focus:ring-[#DE896A]/20"
               >
-                <SelectValue
-                  placeholder={
-                    selectedBatchId !== "all"
-                      ? batchResolvedCourseName || "No course assigned"
-                      : "All Courses"
-                  }
-                />
+                <SelectValue placeholder="All Courses" />
               </SelectTrigger>
               <SelectContent>
-                {selectedBatchId === "all" ? (
-                  <>
-                    <SelectItem value="all">All Courses</SelectItem>
-                    {courses.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {cleanDisplayString(c.name || c.courseName)}
-                      </SelectItem>
-                    ))}
-                  </>
-                ) : (
-                  <SelectItem value={selectedCourseId || "none"}>
-                    {batchResolvedCourseName || "No course assigned to this batch"}
+                <SelectItem value="all">All Courses</SelectItem>
+                {courses.map((c) => (
+                  <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
+                    {cleanDisplayString(c.name || (c as any).courseName)}
                   </SelectItem>
-                )}
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -478,7 +491,7 @@ export default function Documents() {
             </span>
             {selectedBatch && (
               <span className="inline-flex items-center gap-1 rounded-lg bg-white border border-[#F5E2DA] px-2.5 py-1 font-semibold text-[#233047]">
-                <Users className="h-3 w-3 text-[#DE896A]" /> Batch: {cleanDisplayString(selectedBatch.batchName)}
+                <Users className="h-3 w-3 text-[#DE896A]" /> Batch: {cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}
               </span>
             )}
             {contextCourseName && (

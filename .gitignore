@@ -29,3 +29,8 @@ dist-ssr
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Playwright & Test Artifacts
+test-results/
+playwright-report/
+.playwright-mcp/

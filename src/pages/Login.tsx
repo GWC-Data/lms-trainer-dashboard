@@ -99,7 +99,7 @@ export default function Login() {
       setCooldownSeconds((s) => Math.max(s - 1, 0));
     }, 1000);
     return () => clearInterval(interval);
-  }, [cooldownSeconds > 0]);
+  }, [cooldownSeconds]);
 
   if (isAuthenticated) {
     const redirectTo = (location.state as { from?: { pathname?: string } })?.from?.pathname ?? "/";
@@ -107,7 +107,6 @@ export default function Login() {
   }
 
   const errors = validate(email, password);
-  const hasErrors = Object.keys(errors).length > 0;
 
   function completeLoginAndRedirect() {
     // Clean up any temporary auth session flags
@@ -123,33 +122,37 @@ export default function Login() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (isSubmitting) return;
     setTouched({ email: true, password: true });
     setSubmitError(null);
 
-    if (hasErrors) return;
+    const freshErrors = validate(email, password);
+    if (Object.keys(freshErrors).length > 0) return;
 
     setIsSubmitting(true);
-    const result = await login(email, password);
-    setIsSubmitting(false);
+    try {
+      const result = await login(email.trim(), password);
+      if (!result.success) {
+        setSubmitError(result.error ?? "Something went wrong. Please try again.");
+        return;
+      }
 
-    if (!result.success) {
-      setSubmitError(result.error ?? "Something went wrong. Please try again.");
-      return;
+      if (!result.requiresOtp) {
+        // Already verified OTP today on this device — tokens already stored
+        // by login(), skip the OTP screen.
+        completeLoginAndRedirect();
+        return;
+      }
+
+      setVerificationId(result.verificationId ?? null);
+      setStep("otp");
+      setCooldownSeconds(OTP_RESEND_COOLDOWN_SECONDS);
+      setOtpDigits(Array(6).fill(""));
+      setOtpError(null);
+      setResendInfo(null);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (!result.requiresOtp) {
-      // Already verified OTP today on this device — tokens already stored
-      // by login(), skip the OTP screen.
-      completeLoginAndRedirect();
-      return;
-    }
-
-    setVerificationId(result.verificationId ?? null);
-    setStep("otp");
-    setCooldownSeconds(OTP_RESEND_COOLDOWN_SECONDS);
-    setOtpDigits(Array(6).fill(""));
-    setOtpError(null);
-    setResendInfo(null);
   }
 
   function handleOtpDigitChange(index: number, value: string) {

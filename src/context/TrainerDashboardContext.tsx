@@ -27,8 +27,10 @@ export function TrainerDashboardProvider({ children }: { children: ReactNode }) 
   const dashboardDataRef = useRef<TrainerDashboardData | null>(dashboardData);
   dashboardDataRef.current = dashboardData;
 
-  const fetchDashboard = useCallback(async () => {
+  const fetchDashboard = useCallback(async (force = false) => {
     if (!isAuthenticated) return;
+    // Don't refetch if we already have dashboard data, unless explicitly forced
+    if (dashboardDataRef.current && !force) return;
     if (inFlightRef.current) return inFlightRef.current;
 
     const promise = (async () => {
@@ -62,14 +64,22 @@ export function TrainerDashboardProvider({ children }: { children: ReactNode }) 
     return promise;
   }, [isAuthenticated]);
 
+  const refreshDashboard = useCallback(async () => {
+    return fetchDashboard(true);
+  }, [fetchDashboard]);
+
   useEffect(() => {
-    fetchDashboard();
+    if (typeof window !== "undefined" && window.location.pathname === "/") {
+      fetchDashboard(false);
+    }
   }, [fetchDashboard]);
 
   // Listen for schedule/calendar changes to automatically invalidate and refetch dashboard data
   useEffect(() => {
     const handleScheduleUpdate = () => {
-      fetchDashboard();
+      if (typeof window !== "undefined" && window.location.pathname === "/") {
+        fetchDashboard(true);
+      }
     };
 
     window.addEventListener("lms:schedule-updated", handleScheduleUpdate);
@@ -87,7 +97,7 @@ export function TrainerDashboardProvider({ children }: { children: ReactNode }) 
         dashboardData,
         loading,
         error,
-        refreshDashboard: fetchDashboard,
+        refreshDashboard,
         atRiskCount,
         traineesNeedingSupport,
       }}

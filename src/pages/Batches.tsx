@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Layers,
@@ -25,11 +25,13 @@ import {
   SelectItem,
 } from "@/components/ui/Select";
 import {
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerBatchesPaginatedApi,
+  getTrainerFiltersApi,
   BackendBatchItem,
-  TrainerCourseItem,
+  CourseFilterItem,
+  PaginationMetadata,
 } from "@/services/api";
+import Pagination from "@/components/ui/Pagination";
 
 function formatDate(dateStr?: string | null): string {
   if (!dateStr) return "Not scheduled";
@@ -58,88 +60,105 @@ function cleanDisplayString(str?: string | null): string {
 export default function Batches() {
   const navigate = useNavigate();
   const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [courses, setCourses] = useState<TrainerCourseItem[]>([]);
+  const [courses, setCourses] = useState<CourseFilterItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
+  // Filters & Pagination
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedCourseFilter, setSelectedCourseFilter] = useState("all");
   const [selectedModeFilter, setSelectedModeFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const limit = 9;
+  const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
 
-  const fetchData = async () => {
+  const isFirstMountRef = useRef(true);
+
+  // Load course filter options once
+  useEffect(() => {
+    getTrainerFiltersApi()
+      .then(({ courses: coursesRes }) => {
+        setCourses(Array.isArray(coursesRes) ? coursesRes : []);
+      })
+      .catch((err) => console.error("Failed to load course filters:", err));
+  }, []);
+
+  // Debounce search query and reset page to 1
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const handleCourseChange = (newCourseId: string) => {
+    setPage(1);
+    setSelectedCourseFilter(newCourseId);
+  };
+
+  const handleModeChange = (newMode: string) => {
+    setPage(1);
+    setSelectedModeFilter(newMode);
+  };
+
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const [batchesRes, coursesRes] = await Promise.all([
-        getTrainerBatchesApi(),
-        getTrainerCoursesApi().catch(() => ({ success: true, courses: [] })),
-      ]);
-
-      setBatches(Array.isArray(batchesRes) ? batchesRes : []);
-      if (coursesRes.success && Array.isArray(coursesRes.courses)) {
-        setCourses(coursesRes.courses);
+      const res = await getTrainerBatchesPaginatedApi({
+        courseId: selectedCourseFilter !== "all" ? selectedCourseFilter : undefined,
+        mode: selectedModeFilter !== "all" ? selectedModeFilter : undefined,
+        search: debouncedSearch.trim() || undefined,
+        page,
+        limit,
+      });
+      if (res.success && Array.isArray(res.data)) {
+        setBatches(res.data);
+        if (res.pagination) {
+          setPagination(res.pagination);
+        }
       } else {
-        setCourses([]);
+        setBatches([]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to load batches:", err);
-      setError(err?.response?.data?.message || "Failed to load batches. Please try again.");
+      setError((err as { response?: { data?: { message?: string } } })?.response?.data?.message || "Failed to load batches. Please try again.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedCourseFilter, selectedModeFilter, debouncedSearch, page, limit]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   // Map courses by ID for quick resolution
   const courseMap = useMemo(() => {
-    const map = new Map<string, TrainerCourseItem>();
+    const map = new Map<string, CourseFilterItem>();
     courses.forEach((c) => {
       if (c.id) map.set(c.id, c);
     });
     return map;
   }, [courses]);
 
-  // Filtered batches based on search, course, and delivery mode
-  const filteredBatches = useMemo(() => {
-    return batches.filter((b) => {
-      // 1. Course filter
-      if (selectedCourseFilter !== "all" && b.courseId !== selectedCourseFilter) {
-        return false;
-      }
-
-      // 2. Mode filter
-      const mode = (b.deliveryMode || "").toLowerCase();
-      if (selectedModeFilter !== "all" && mode !== selectedModeFilter) {
-        return false;
-      }
-
-      // 3. Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const batchName = (b.batchName || b.name || "").toLowerCase();
-        const courseName = (b.course?.courseName || courseMap.get(b.courseId || "")?.name || "").toLowerCase();
-        if (!batchName.includes(q) && !courseName.includes(q)) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }, [batches, selectedCourseFilter, selectedModeFilter, searchQuery, courseMap]);
-
   const hasActiveFilters =
     Boolean(searchQuery.trim()) ||
     selectedCourseFilter !== "all" ||
-    selectedModeFilter !== "all";
+    selectedModeFilter !== "all" ||
+    page > 1;
 
   const resetFilters = () => {
     setSearchQuery("");
+    setDebouncedSearch("");
     setSelectedCourseFilter("all");
     setSelectedModeFilter("all");
+    setPage(1);
   };
 
   if (loading && batches.length === 0) {
@@ -183,7 +202,7 @@ export default function Batches() {
         <div className="flex flex-wrap items-center gap-2.5">
           {/* Course Filter */}
           <div className="w-52">
-            <Select value={selectedCourseFilter} onValueChange={setSelectedCourseFilter}>
+            <Select value={selectedCourseFilter} onValueChange={handleCourseChange}>
               <SelectTrigger>
                 <SelectValue placeholder="Filter by Course" />
               </SelectTrigger>
@@ -200,7 +219,7 @@ export default function Batches() {
 
           {/* Mode Filter */}
           <div className="w-36">
-            <Select value={selectedModeFilter} onValueChange={setSelectedModeFilter}>
+            <Select value={selectedModeFilter} onValueChange={handleModeChange}>
               <SelectTrigger>
                 <SelectValue placeholder="Delivery Mode" />
               </SelectTrigger>
@@ -258,36 +277,39 @@ export default function Batches() {
           </div>
         </div>
       ) : batches.length === 0 ? (
-        <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-xs">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
-            <Layers className="h-6 w-6" />
+        hasActiveFilters ? (
+          <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-xs">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
+              <Search className="h-6 w-6" />
+            </div>
+            <h3 className="mt-3 text-base font-bold text-[#233047]">No matching batches found.</h3>
+            <p className="mt-1 text-xs text-[#8C7A70]">
+              Try adjusting your search query or filter options.
+            </p>
+            <div className="mt-4 flex justify-center">
+              <button
+                onClick={resetFilters}
+                className="rounded-xl bg-[#DE896A] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#C87556] transition-colors"
+              >
+                Reset Filters
+              </button>
+            </div>
           </div>
-          <h3 className="mt-3 text-base font-bold text-[#233047]">No batches are currently available.</h3>
-          <p className="mt-1 text-xs text-[#8C7A70]">
-            No batches have been assigned to your trainer profile yet.
-          </p>
-        </div>
-      ) : filteredBatches.length === 0 ? (
-        <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-xs">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
-            <Search className="h-6 w-6" />
+        ) : (
+          <div className="rounded-2xl border border-[#F0EAE6] bg-white p-12 text-center shadow-xs">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#FAF7F5] text-[#DE896A]">
+              <Layers className="h-6 w-6" />
+            </div>
+            <h3 className="mt-3 text-base font-bold text-[#233047]">No batches are currently available.</h3>
+            <p className="mt-1 text-xs text-[#8C7A70]">
+              No batches have been assigned to your trainer profile yet.
+            </p>
           </div>
-          <h3 className="mt-3 text-base font-bold text-[#233047]">No matching batches found.</h3>
-          <p className="mt-1 text-xs text-[#8C7A70]">
-            Try adjusting your search query or filter options.
-          </p>
-          <div className="mt-4 flex justify-center">
-            <button
-              onClick={resetFilters}
-              className="rounded-xl bg-[#DE896A] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#C87556] transition-colors"
-            >
-              Reset Filters
-            </button>
-          </div>
-        </div>
+        )
       ) : (
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {filteredBatches.map((b) => {
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
+            {batches.map((b) => {
             const resolvedCourse =
               b.course?.courseName
                 ? b.course
@@ -295,14 +317,19 @@ export default function Batches() {
                 ? {
                     id: b.courseId,
                     courseName: courseMap.get(b.courseId)!.name,
-                    courseDesc: courseMap.get(b.courseId)!.description,
+                    courseDesc: "",
                   }
                 : null;
 
             const courseName = resolvedCourse?.courseName || null;
             const courseDesc = resolvedCourse?.courseDesc || null;
             const isOnline = (b.deliveryMode || "online").toLowerCase() === "online";
-            const traineeCount = Array.isArray(b.trainees) ? b.trainees.length : 0;
+            const traineeCount =
+              typeof b.traineeCount === "number"
+                ? b.traineeCount
+                : Array.isArray(b.trainees)
+                ? b.trainees.length
+                : 0;
 
             return (
               <div
@@ -419,6 +446,22 @@ export default function Batches() {
               </div>
             );
           })}
+          </div>
+
+          {/* Pagination Controls */}
+          {!loading && pagination && pagination.total > 0 && (
+            <Pagination
+              page={page}
+              totalPages={pagination.totalPages}
+              total={pagination.total}
+              limit={limit}
+              hasPreviousPage={pagination.hasPreviousPage}
+              hasNextPage={pagination.hasNextPage}
+              onPageChange={setPage}
+              itemLabel="batches"
+              loading={loading}
+            />
+          )}
         </div>
       )}
     </div>
