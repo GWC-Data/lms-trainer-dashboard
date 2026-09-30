@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Layers,
   Calendar,
@@ -64,12 +64,14 @@ export default function Batches() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters & Pagination
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [selectedCourseFilter, setSelectedCourseFilter] = useState("all");
-  const [selectedModeFilter, setSelectedModeFilter] = useState("all");
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Filters & Pagination initialized from URL
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get("search") || "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("search") || "");
+  const [selectedCourseFilter, setSelectedCourseFilter] = useState(() => searchParams.get("courseId") || "all");
+  const [selectedModeFilter, setSelectedModeFilter] = useState(() => searchParams.get("mode") || "all");
+  const [page, setPage] = useState<number>(() => Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1));
   const limit = 9;
   const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
 
@@ -96,6 +98,38 @@ export default function Batches() {
     }, 350);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Synchronize URL search params with active filters
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (debouncedSearch.trim()) next.set("search", debouncedSearch.trim());
+    if (selectedCourseFilter && selectedCourseFilter !== "all") next.set("courseId", selectedCourseFilter);
+    if (selectedModeFilter && selectedModeFilter !== "all") next.set("mode", selectedModeFilter);
+    if (page > 1) next.set("page", String(page));
+    setSearchParams(next, { replace: true });
+  }, [debouncedSearch, selectedCourseFilter, selectedModeFilter, page, setSearchParams]);
+
+  // Sync external URL changes
+  useEffect(() => {
+    const urlSearch = searchParams.get("search") || "";
+    const urlCourse = searchParams.get("courseId") || "all";
+    const urlMode = searchParams.get("mode") || "all";
+    const urlPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+
+    if (urlSearch !== debouncedSearch) {
+      setSearchQuery(urlSearch);
+      setDebouncedSearch(urlSearch);
+    }
+    if (urlCourse !== selectedCourseFilter) {
+      setSelectedCourseFilter(urlCourse);
+    }
+    if (urlMode !== selectedModeFilter) {
+      setSelectedModeFilter(urlMode);
+    }
+    if (urlPage !== page) {
+      setPage(urlPage);
+    }
+  }, [searchParams]);
 
   const handleCourseChange = (newCourseId: string) => {
     setPage(1);

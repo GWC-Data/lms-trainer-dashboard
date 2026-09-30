@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   Plus,
@@ -12,10 +12,13 @@ import {
   Sparkles,
   RotateCcw,
   Users,
+  Search,
+  X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import Button from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Input } from "@/components/ui/Input";
 import {
   Select,
   SelectContent,
@@ -29,10 +32,12 @@ import {
   type BackendModuleItem,
   type BatchFilterItem,
   type CourseFilterItem,
+  type PaginationMetadata,
 } from "@/services/api";
 import AddModuleModal from "@/components/forms/AddModuleModal";
 import { cn } from "@/lib/utils";
 import PageLoader from "@/components/ui/PageLoader";
+import Pagination from "@/components/ui/Pagination";
 
 // Helper to strip internal IDs and UUIDs from visible names
 function cleanDisplayString(name?: string | null): string {
@@ -76,9 +81,18 @@ export default function Modules() {
 
   const urlCourseId = searchParams.get("courseId") || "";
   const urlBatchId = searchParams.get("batchId") || "";
+  const urlSearch = searchParams.get("search") || "";
+  const urlPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>(urlBatchId || "all");
   const [selectedCourseId, setSelectedCourseId] = useState<string>(urlCourseId || "all");
+  const [searchQuery, setSearchQuery] = useState(urlSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(urlSearch);
+  const [page, setPage] = useState<number>(urlPage);
+  const limit = 10;
+  const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
+
+  const isFirstMountRef = useRef(true);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 1. Parallel Load: Lightweight Batches & Courses Filters (Once on mount)
@@ -112,10 +126,6 @@ export default function Modules() {
         } else if (urlCourseId && coursesRes.some((c) => c.id === urlCourseId)) {
           setSelectedCourseId(urlCourseId);
           setSelectedBatchId("all");
-        } else if (coursesRes.length > 0 && !urlBatchId && !urlCourseId) {
-          // Default to first course if neither is provided
-          setSelectedCourseId(coursesRes[0].id);
-          setSelectedBatchId("all");
         }
       } catch (err) {
         console.error("Failed to load reference data for modules:", err);
@@ -131,7 +141,56 @@ export default function Modules() {
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 2. Canonical Batch → Course Resolution
+  // 2. Debounce search query and reset page to 1
+  // ─────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Synchronize URL search params with active filters
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (debouncedSearch.trim()) next.set("search", debouncedSearch.trim());
+    if (selectedBatchId && selectedBatchId !== "all") next.set("batchId", selectedBatchId);
+    if (selectedCourseId && selectedCourseId !== "all" && selectedCourseId !== "none") {
+      next.set("courseId", selectedCourseId);
+    }
+    if (page > 1) next.set("page", String(page));
+    setSearchParams(next, { replace: true });
+  }, [debouncedSearch, selectedBatchId, selectedCourseId, page, setSearchParams]);
+
+  // Sync external URL changes
+  useEffect(() => {
+    const s = searchParams.get("search") || "";
+    const c = searchParams.get("courseId") || "all";
+    const b = searchParams.get("batchId") || "all";
+    const p = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+
+    if (s !== debouncedSearch) {
+      setSearchQuery(s);
+      setDebouncedSearch(s);
+    }
+    if (c !== selectedCourseId) {
+      setSelectedCourseId(c);
+    }
+    if (b !== selectedBatchId) {
+      setSelectedBatchId(b);
+    }
+    if (p !== page) {
+      setPage(p);
+    }
+  }, [searchParams]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 3. Canonical Batch → Course Resolution
   // ─────────────────────────────────────────────────────────────────────────────
   const selectedBatch = useMemo(
     () => (selectedBatchId === "all" ? null : batches.find((b) => b.id === selectedBatchId) || null),
@@ -162,10 +221,9 @@ export default function Modules() {
   }, [batches, selectedCourseId]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 3. Fetch Modules for Selected Course
+  // 4. Fetch Modules with Server-Side Search, Filter, and Pagination
   // ─────────────────────────────────────────────────────────────────────────────
   const fetchModules = useCallback(async () => {
-    // If batch has no course assigned (orphan batch)
     if (selectedCourseId === "none") {
       setModules([]);
       setLoading(false);
@@ -175,15 +233,18 @@ export default function Modules() {
     try {
       setLoading(true);
       setError(null);
-      const targetCourseParam =
-        selectedCourseId && selectedCourseId !== "all" ? selectedCourseId : undefined;
-      const res = await getModulesApi(targetCourseParam);
+      const res = await getModulesApi({
+        courseId: selectedCourseId && selectedCourseId !== "all" ? selectedCourseId : undefined,
+        batchId: selectedBatchId && selectedBatchId !== "all" ? selectedBatchId : undefined,
+        search: debouncedSearch.trim() || undefined,
+        page,
+        limit,
+      });
 
       if (res.success && Array.isArray(res.modules)) {
-        if (targetCourseParam) {
-          setModules(res.modules.filter((m) => m.courseId === targetCourseParam));
-        } else {
-          setModules(res.modules);
+        setModules(res.modules);
+        if (res.pagination) {
+          setPagination(res.pagination);
         }
       } else {
         setModules([]);
@@ -195,77 +256,58 @@ export default function Modules() {
     } finally {
       setLoading(false);
     }
-  }, [selectedCourseId]);
+  }, [selectedCourseId, selectedBatchId, debouncedSearch, page, limit]);
 
   useEffect(() => {
     if (!loadingRef) {
       fetchModules();
     }
-  }, [selectedCourseId, loadingRef, fetchModules]);
+  }, [fetchModules, loadingRef]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 4. Filter Handlers
+  // 5. Filter Handlers
   // ─────────────────────────────────────────────────────────────────────────────
   const handleBatchChange = (newBatchId: string) => {
+    setPage(1);
     setSelectedBatchId(newBatchId);
-    if (newBatchId === "all") {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("batchId");
-        return next;
-      });
-    } else {
+    if (newBatchId !== "all") {
       const found = batches.find((b) => b.id === newBatchId);
       const targetCourseId = found?.courseId;
       if (targetCourseId) {
         setSelectedCourseId(targetCourseId);
-        setSearchParams({ batchId: newBatchId, courseId: targetCourseId });
-      } else {
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("batchId", newBatchId);
-          return next;
-        });
       }
     }
   };
 
   const handleCourseChange = (newCourseId: string) => {
+    setPage(1);
     setSelectedCourseId(newCourseId);
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (newCourseId === "all") {
-        next.delete("courseId");
-      } else {
-        next.set("courseId", newCourseId);
-      }
-      return next;
-    });
 
     // If current batch does not belong to this new course, reset batch to all
     if (newCourseId !== "all" && newCourseId !== "none" && selectedBatchId !== "all") {
       const currentBatch = batches.find((b) => b.id === selectedBatchId);
       if (currentBatch && currentBatch.courseId && currentBatch.courseId !== newCourseId) {
         setSelectedBatchId("all");
-        setSearchParams((prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete("batchId");
-          return next;
-        });
       }
     }
   };
 
   const handleClearFilters = () => {
+    setSearchQuery("");
+    setDebouncedSearch("");
     setSelectedBatchId("all");
     setSelectedCourseId("all");
-    setSearchParams({});
+    setPage(1);
   };
 
-  const handleModuleClick = (moduleId: string) => {
+  const handleModuleClick = (moduleId: string, moduleCourseId?: string) => {
     const params = new URLSearchParams();
-    if (selectedCourseId && selectedCourseId !== "all" && selectedCourseId !== "none") {
-      params.set("courseId", selectedCourseId);
+    const effectiveCourseId =
+      selectedCourseId && selectedCourseId !== "all" && selectedCourseId !== "none"
+        ? selectedCourseId
+        : moduleCourseId;
+    if (effectiveCourseId && effectiveCourseId !== "all" && effectiveCourseId !== "none") {
+      params.set("courseId", effectiveCourseId);
     }
     params.set("moduleId", moduleId);
     if (selectedBatchId && selectedBatchId !== "all") {
@@ -307,8 +349,28 @@ export default function Modules() {
           </p>
         </div>
 
-        {/* Responsive Toolbar with Batch & Course Dropdowns */}
+        {/* Responsive Toolbar with Search, Batch & Course Dropdowns */}
         <div className="flex flex-wrap items-center gap-3">
+          {/* Search Input */}
+          <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#8C7A70]" />
+            <Input
+              type="text"
+              placeholder="Search modules..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-8 h-10 rounded-xl border-[#F0DED4] bg-white text-xs font-medium text-[#233047] placeholder:text-[#8C7A70] focus:ring-[#DE896A]/20"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8C7A70] hover:text-[#3A2A22]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
           {/* Batch Selector Dropdown */}
           <div className="w-full sm:w-48">
             <Select
@@ -354,7 +416,7 @@ export default function Modules() {
           </div>
 
           {/* Clear Filters Button */}
-          {(selectedBatchId !== "all" || selectedCourseId !== "all") && (
+          {(searchQuery || selectedBatchId !== "all" || selectedCourseId !== "all" || page > 1) && (
             <Button
               variant="outline"
               size="sm"
@@ -497,14 +559,14 @@ export default function Modules() {
               return (
                 <div
                   key={m.id}
-                  onClick={() => handleModuleClick(m.id)}
+                  onClick={() => handleModuleClick(m.id, m.courseId)}
                   className="group flex cursor-pointer items-center justify-between gap-4 p-4 transition-all duration-150 hover:bg-[#FFFBF9] hover:pl-5"
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      handleModuleClick(m.id);
+                      handleModuleClick(m.id, m.courseId);
                     }
                   }}
                   title="Click to view module materials"
@@ -551,6 +613,21 @@ export default function Modules() {
           )}
         </CardContent>
       </Card>
+
+      {/* Pagination */}
+      {pagination && (
+        <Pagination
+          page={pagination.page}
+          totalPages={pagination.totalPages}
+          total={pagination.total}
+          limit={pagination.limit}
+          hasNextPage={pagination.hasNextPage}
+          hasPreviousPage={pagination.hasPreviousPage}
+          onPageChange={(newPage) => setPage(newPage)}
+          loading={loading}
+          itemLabel="modules"
+        />
+      )}
 
       <AddModuleModal
         open={modalOpen}

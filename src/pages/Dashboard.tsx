@@ -18,14 +18,12 @@ import SupportTraineeCard from "@/components/dashboard/SupportTraineeCard";
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { dashboardData, loading, error, refreshDashboard } = useTrainerDashboard();
+  const { dashboardData, loading, error, refreshDashboard, fetchDashboard } = useTrainerDashboard();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
-    if (!dashboardData) {
-      refreshDashboard();
-    }
-  }, [dashboardData, refreshDashboard]);
+    fetchDashboard(false);
+  }, [fetchDashboard]);
 
 
   const trainerFirstName =

@@ -20,14 +20,13 @@ import {
 } from "@/components/ui/Select";
 import FileDropzone from "@/components/ui/FileDropzone";
 import {
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerFiltersApi,
   getModulesForCourseApi,
   createQuizApi,
   updateQuizApi,
   type BackendBatchItem,
   type BackendModuleSimpleItem,
-  type TrainerCourseItem,
+  type TrainerFilterCourseItem,
 } from "@/services/api";
 import type { Quiz } from "@/types";
 
@@ -112,7 +111,7 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
   const isEditing = Boolean(quiz);
 
   const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [allCourses, setAllCourses] = useState<TrainerCourseItem[]>([]);
+  const [allCourses, setAllCourses] = useState<TrainerFilterCourseItem[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [modules, setModules] = useState<BackendModuleSimpleItem[]>([]);
 
@@ -159,14 +158,19 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
     setFileError("");
     setSelectedFile(null);
 
-    Promise.all([
-      getTrainerBatchesApi(),
-      getTrainerCoursesApi().catch(() => ({ courses: [] })),
-    ])
-      .then(([batchList, coursesRes]) => {
+    getTrainerFiltersApi()
+      .then((data) => {
         if (cancelled) return;
+        const batchList: BackendBatchItem[] = (data?.batches || []).map((b) => ({
+          id: b.id,
+          batchName: b.name,
+          courseId: b.courseId,
+          course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name } : null,
+        }));
+        const courseList: TrainerFilterCourseItem[] = data?.courses || [];
+
         setBatches(batchList);
-        setAllCourses(coursesRes?.courses || []);
+        setAllCourses(courseList);
 
         const initialBatchId = quiz?.batchId || "";
         reset({
@@ -218,7 +222,7 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
     if (matched) {
       const courseOpt: CourseOption = {
         id: matched.id || (matched as any).courseId,
-        name: matched.courseName || (matched as any).name,
+        name: matched.name || (matched as any).courseName,
       };
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id, { shouldValidate: true });

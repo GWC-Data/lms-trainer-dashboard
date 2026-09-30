@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "sonner";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -32,7 +32,10 @@ export default function App() {
   // app start — the access token only ever lives in memory (Redux), so a
   // page reload/reopen has nothing else to go on. Route guards wait on
   // isBootstrapping instead of racing this and briefly bouncing to /login.
+  const hasRestoredRef = useRef(false);
   useEffect(() => {
+    if (hasRestoredRef.current) return;
+    hasRestoredRef.current = true;
     dispatch(restoreSessionThunk());
   }, [dispatch]);
 

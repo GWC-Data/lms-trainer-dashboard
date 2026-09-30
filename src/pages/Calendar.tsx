@@ -215,7 +215,20 @@ const Calendar: React.FC = () => {
       setIsLoading(true);
       try {
         if (isTrainer || isAdmin) {
-          const { batches: trainerBatches } = await getTrainerFiltersApi();
+          const startDate = currentMonth.clone().startOf("month").format("YYYY-MM-DD");
+          const endDate = currentMonth.clone().endOf("month").format("YYYY-MM-DD");
+
+          const [filtersRes, res] = await Promise.all([
+            getTrainerFiltersApi(),
+            getTrainerScheduleApi({
+              startDate,
+              endDate,
+            }),
+          ]);
+
+          if (!isMounted) return;
+
+          const trainerBatches = filtersRes?.batches || [];
           const filters: BatchFilter[] = (trainerBatches || [])
             .map((b: any) => ({
               id: b.id || b.batchId,
@@ -223,23 +236,11 @@ const Calendar: React.FC = () => {
             }))
             .filter((f: any) => Boolean(f.id && f.name));
 
-          if (!isMounted) return;
-
           setBatchFilters(filters);
           const initialBatch = filters.length > 0 ? filters[0].id : "all";
           setSelectedBatch(initialBatch);
           setBatchId(initialBatch);
           setBatchName(filters[0]?.name || "All Batches");
-
-          const startDate = currentMonth.clone().startOf("month").format("YYYY-MM-DD");
-          const endDate = currentMonth.clone().endOf("month").format("YYYY-MM-DD");
-          const res = await getTrainerScheduleApi({
-            batchId: initialBatch !== "all" ? initialBatch : undefined,
-            startDate,
-            endDate,
-          });
-
-          if (!isMounted) return;
 
           const rows = res?.data || [];
           const items: UnifiedEventItem[] = rows.map((r: any) => {
