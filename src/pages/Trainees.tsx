@@ -52,7 +52,7 @@ export default function Trainees() {
   const location = useLocation();
   const navigate = useNavigate();
   const { traineeId: routeTraineeId } = useParams<{ traineeId?: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const batchIdParam = searchParams.get("batchId") || undefined;
 
   const requestedState = location.state as {
@@ -114,13 +114,20 @@ export default function Trainees() {
   const [batches, setBatches] = useState<BatchFilterItem[]>([]);
   const [loadingSelectors, setLoadingSelectors] = useState(!routeTraineeId);
 
-  const [query, setQuery] = useState(requestedSearch ?? "");
-  const [courseFilter, setCourseFilter] = useState<string>(ALL);
-  const [batchFilter, setBatchFilter] = useState<string>(requestedBatchId ?? ALL);
-  const [modeFilter, setModeFilter] = useState<string>(ALL);
-  const [riskOnly, setRiskOnly] = useState(requestedRiskOnly ?? false);
+  const urlSearch = searchParams.get("search") || requestedSearch || "";
+  const urlBatchId = searchParams.get("batchId") || requestedBatchId || ALL;
+  const urlCourseId = searchParams.get("courseId") || ALL;
+  const urlMode = searchParams.get("mode") || ALL;
+  const urlRiskOnly = searchParams.get("riskOnly") === "true" || requestedRiskOnly || false;
+  const urlPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
 
-  const [page, setPage] = useState<number>(1);
+  const [query, setQuery] = useState(urlSearch);
+  const [courseFilter, setCourseFilter] = useState<string>(urlCourseId);
+  const [batchFilter, setBatchFilter] = useState<string>(urlBatchId);
+  const [modeFilter, setModeFilter] = useState<string>(urlMode);
+  const [riskOnly, setRiskOnly] = useState(urlRiskOnly);
+
+  const [page, setPage] = useState<number>(urlPage);
   const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
 
   const [trainees, setTrainees] = useState<TraineeListItem[]>([]);
@@ -208,6 +215,50 @@ export default function Trainees() {
     return () => clearTimeout(handler);
   }, [query]);
 
+  // Synchronize URL search params with active filters
+  useEffect(() => {
+    if (routeTraineeId) return;
+    const next = new URLSearchParams();
+    if (debouncedQuery.trim()) next.set("search", debouncedQuery.trim());
+    if (batchFilter && batchFilter !== ALL) next.set("batchId", batchFilter);
+    if (courseFilter && courseFilter !== ALL) next.set("courseId", courseFilter);
+    if (modeFilter && modeFilter !== ALL) next.set("mode", modeFilter);
+    if (riskOnly) next.set("riskOnly", "true");
+    if (page > 1) next.set("page", String(page));
+    setSearchParams(next, { replace: true });
+  }, [debouncedQuery, batchFilter, courseFilter, modeFilter, riskOnly, page, routeTraineeId, setSearchParams]);
+
+  // Sync external URL changes
+  useEffect(() => {
+    if (routeTraineeId) return;
+    const s = searchParams.get("search") || "";
+    const b = searchParams.get("batchId") || ALL;
+    const c = searchParams.get("courseId") || ALL;
+    const m = searchParams.get("mode") || ALL;
+    const r = searchParams.get("riskOnly") === "true";
+    const p = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+
+    if (s !== debouncedQuery) {
+      setQuery(s);
+      setDebouncedQuery(s);
+    }
+    if (b !== batchFilter) {
+      setBatchFilter(b);
+    }
+    if (c !== courseFilter) {
+      setCourseFilter(c);
+    }
+    if (m !== modeFilter) {
+      setModeFilter(m);
+    }
+    if (r !== riskOnly) {
+      setRiskOnly(r);
+    }
+    if (p !== page) {
+      setPage(p);
+    }
+  }, [searchParams, routeTraineeId]);
+
   // 2. Fetch real trainees based on filters with database-level pagination
   const fetchTrainees = useCallback(async () => {
     try {
@@ -221,7 +272,7 @@ export default function Trainees() {
         page,
         limit: 20,
       });
-      setTrainees(res.data?.trainees || []);
+      setTrainees(res.trainees || (res as any).data?.trainees || []);
       if (res.pagination) {
         setPagination(res.pagination);
       }

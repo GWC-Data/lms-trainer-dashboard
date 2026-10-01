@@ -114,7 +114,7 @@ export default function Reports() {
           courseId: targetCourseId || undefined,
         });
         if (!mounted) return;
-        setTrainees(res.data?.trainees || []);
+        setTrainees(res.trainees || (res as any).data?.trainees || []);
       } catch (err) {
         console.error("Failed to load trainees for report:", err);
         if (mounted) setTrainees([]);

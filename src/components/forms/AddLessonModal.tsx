@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import {
-  getTrainerBatchesApi,
+  getTrainerFiltersApi,
   getModulesForCourseApi,
   createLessonApi,
   BackendBatchItem,
@@ -147,8 +147,14 @@ export default function AddLessonModal({
     const fetchBatches = async () => {
       try {
         setLoadingBatches(true);
-        const list = await getTrainerBatchesApi();
-        if (isMounted && Array.isArray(list)) {
+        const data = await getTrainerFiltersApi();
+        if (isMounted) {
+          const list: BackendBatchItem[] = (data?.batches || []).map((b) => ({
+            id: b.id,
+            batchName: b.name,
+            courseId: b.courseId,
+            course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name } : null,
+          }));
           setBatches(list);
           const initialBatchId = defaultBatchId || list[0]?.id || "";
           reset({

@@ -10,6 +10,7 @@ interface TrainerDashboardContextValue {
   dashboardData: TrainerDashboardData | null;
   loading: boolean;
   error: string | null;
+  fetchDashboard: (force?: boolean) => Promise<void>;
   refreshDashboard: () => Promise<void>;
   atRiskCount: number;
   traineesNeedingSupport: DashboardTraineeSupport[];
@@ -68,18 +69,10 @@ export function TrainerDashboardProvider({ children }: { children: ReactNode }) 
     return fetchDashboard(true);
   }, [fetchDashboard]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.location.pathname === "/") {
-      fetchDashboard(false);
-    }
-  }, [fetchDashboard]);
-
   // Listen for schedule/calendar changes to automatically invalidate and refetch dashboard data
   useEffect(() => {
     const handleScheduleUpdate = () => {
-      if (typeof window !== "undefined" && window.location.pathname === "/") {
-        fetchDashboard(true);
-      }
+      fetchDashboard(true);
     };
 
     window.addEventListener("lms:schedule-updated", handleScheduleUpdate);
@@ -97,6 +90,7 @@ export function TrainerDashboardProvider({ children }: { children: ReactNode }) 
         dashboardData,
         loading,
         error,
+        fetchDashboard,
         refreshDashboard,
         atRiskCount,
         traineesNeedingSupport,

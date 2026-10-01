@@ -215,7 +215,20 @@ const Calendar: React.FC = () => {
       setIsLoading(true);
       try {
         if (isTrainer || isAdmin) {
-          const { batches: trainerBatches } = await getTrainerFiltersApi();
+          const startDate = currentMonth.clone().startOf("month").format("YYYY-MM-DD");
+          const endDate = currentMonth.clone().endOf("month").format("YYYY-MM-DD");
+
+          const [filtersRes, res] = await Promise.all([
+            getTrainerFiltersApi(),
+            getTrainerScheduleApi({
+              startDate,
+              endDate,
+            }),
+          ]);
+
+          if (!isMounted) return;
+
+          const trainerBatches = filtersRes?.batches || [];
           const filters: BatchFilter[] = (trainerBatches || [])
             .map((b: any) => ({
               id: b.id || b.batchId,
@@ -223,23 +236,11 @@ const Calendar: React.FC = () => {
             }))
             .filter((f: any) => Boolean(f.id && f.name));
 
-          if (!isMounted) return;
-
           setBatchFilters(filters);
           const initialBatch = filters.length > 0 ? filters[0].id : "all";
           setSelectedBatch(initialBatch);
           setBatchId(initialBatch);
           setBatchName(filters[0]?.name || "All Batches");
-
-          const startDate = currentMonth.clone().startOf("month").format("YYYY-MM-DD");
-          const endDate = currentMonth.clone().endOf("month").format("YYYY-MM-DD");
-          const res = await getTrainerScheduleApi({
-            batchId: initialBatch !== "all" ? initialBatch : undefined,
-            startDate,
-            endDate,
-          });
-
-          if (!isMounted) return;
 
           const rows = res?.data || [];
           const items: UnifiedEventItem[] = rows.map((r: any) => {
@@ -300,9 +301,11 @@ const Calendar: React.FC = () => {
     };
   }, []);
 
-  // Keep form date in sync when user picks a date
+  // Keep form date in sync when user picks a date (clamping past dates to today)
   useEffect(() => {
-    setFormEventDate(selectedDate.format("YYYY-MM-DD"));
+    const todayStr = moment().format("YYYY-MM-DD");
+    const selDateStr = selectedDate.format("YYYY-MM-DD");
+    setFormEventDate(selDateStr < todayStr ? todayStr : selDateStr);
   }, [selectedDate]);
 
   // Keep form batch in sync with the actively selected batch
@@ -383,6 +386,12 @@ const Calendar: React.FC = () => {
     }
     if (!formEventDate) {
       toast.error("Please select an event date.");
+      return;
+    }
+
+    const todayStr = moment().format("YYYY-MM-DD");
+    if (formEventDate < todayStr) {
+      toast.error("Events cannot be scheduled for a past date.");
       return;
     }
 
@@ -1193,6 +1202,7 @@ const Calendar: React.FC = () => {
                   </label>
                   <input
                     type="date"
+                    min={moment().format("YYYY-MM-DD")}
                     value={formEventDate}
                     onChange={(e) => setFormEventDate(e.target.value)}
                     className="w-full text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#DE6841]"

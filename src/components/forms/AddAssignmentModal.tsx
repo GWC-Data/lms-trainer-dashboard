@@ -23,11 +23,10 @@ import { Calendar } from "@/components/ui/Calendar";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  getTrainerBatchesApi,
-  getTrainerCoursesApi,
+  getTrainerFiltersApi,
   createAssignmentApi,
   type BackendBatchItem,
-  type TrainerCourseItem,
+  type TrainerFilterCourseItem,
 } from "@/services/api";
 
 interface AddAssignmentModalProps {
@@ -115,7 +114,7 @@ export default function AddAssignmentModal({
   onSuccess,
 }: AddAssignmentModalProps) {
   const [batches, setBatches] = useState<BackendBatchItem[]>([]);
-  const [allCourses, setAllCourses] = useState<TrainerCourseItem[]>([]);
+  const [allCourses, setAllCourses] = useState<TrainerFilterCourseItem[]>([]);
   const [courses, setCourses] = useState<CourseOption[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [loadingCourses, setLoadingCourses] = useState(false);
@@ -165,14 +164,19 @@ export default function AddAssignmentModal({
     setLoadingCourses(true);
     setSubmitError(null);
 
-    Promise.all([
-      getTrainerBatchesApi(),
-      getTrainerCoursesApi().catch(() => ({ courses: [] })),
-    ])
-      .then(([batchList, coursesRes]) => {
+    getTrainerFiltersApi()
+      .then((data) => {
         if (cancelled) return;
+        const batchList: BackendBatchItem[] = (data?.batches || []).map((b) => ({
+          id: b.id,
+          batchName: b.name,
+          courseId: b.courseId,
+          course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name } : null,
+        }));
+        const courseList: TrainerFilterCourseItem[] = data?.courses || [];
+
         setBatches(batchList);
-        setAllCourses(coursesRes?.courses || []);
+        setAllCourses(courseList);
 
         const initialBatchId =
           defaultBatchId && batchList.some((b) => b.id === defaultBatchId)
@@ -225,7 +229,7 @@ export default function AddAssignmentModal({
     if (matched) {
       const courseOpt: CourseOption = {
         id: matched.id || (matched as any).courseId,
-        name: matched.courseName || (matched as any).name,
+        name: matched.name || (matched as any).courseName,
       };
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id, { shouldValidate: true });

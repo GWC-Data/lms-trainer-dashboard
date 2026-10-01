@@ -65,6 +65,29 @@ api.interceptors.request.use(
 );
 
 
+export interface BackendUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  jobBoardAccess?: string;
+  roleId?: string;
+  role?: string;
+  permissions?: string[];
+}
+
+export type SessionRestoreResult =
+  | { status: "authenticated"; accessToken: string; user: BackendUser }
+  | { status: "unauthenticated" }
+  | { status: "unknown" };
+
+// Shared in-flight promise so concurrent callers (several components
+// mounting at once, or the bootstrap restore racing a 401-triggered one)
+// collapse into a single network call — the backend rotates the refresh
+// token cookie on every call, so firing it twice in parallel would have the
+// second request racing the first's just-rotated cookie.
+let restoreInFlight: Promise<SessionRestoreResult> | null = null;
+
 // Response interceptor — on 401, attempt one silent token refresh before
 // falling back to a hard logout/redirect.
 api.interceptors.response.use(
@@ -77,7 +100,32 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !isPublicAuth && originalRequest && !originalRequest._retry) {
       originalRequest._retry = true;
 
-      const restored = await store.dispatch(restoreSessionThunk()).unwrap();
+      const authState = store.getState().auth;
+
+      // During initial bootstrap or when no access token exists, do NOT trigger another refresh
+      if (authState.isBootstrapping || !authState.accessToken) {
+        if (restoreInFlight) {
+          try {
+            const restored = await restoreInFlight;
+            if (restored.status === "authenticated") {
+              originalRequest.headers = originalRequest.headers || {};
+              originalRequest.headers.Authorization = `Bearer ${restored.accessToken}`;
+              return api.request(originalRequest);
+            }
+          } catch {
+            // Restore failed
+          }
+        }
+        return Promise.reject(error);
+      }
+
+      // Re-use in-flight restore promise if already active; otherwise dispatch one
+      let restored: SessionRestoreResult;
+      if (restoreInFlight) {
+        restored = await restoreInFlight;
+      } else {
+        restored = await store.dispatch(restoreSessionThunk()).unwrap();
+      }
 
       if (restored.status === "authenticated") {
         originalRequest.headers = originalRequest.headers || {};
@@ -118,16 +166,7 @@ export function deduplicatedGet<T = any>(url: string, config?: any): Promise<T> 
   return promise;
 }
 
-export interface BackendUser {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  jobBoardAccess?: string;
-  roleId?: string;
-  role?: string;
-  permissions?: string[];
-}
+
 
 // Two shapes: a device that already verified OTP today (calendar-day rule,
 // not a rolling window) gets tokens back immediately with requiresOtp:
@@ -262,25 +301,7 @@ export async function resendOtpApi(verificationId: string): Promise<ResendOtpRes
   return response.data;
 }
 
-// Three outcomes, deliberately distinguished: a definitive "no" (the server
-// affirmatively said the refresh token is invalid/expired/revoked, or there
-// was no session to find) must log the user out, but a transient failure
-// (network blip, timeout, 5xx — e.g. the dev server mid-restart) must NOT:
-// treating those the same means a brief network hiccup during the
-// background proactive-refresh silently logs out a user with a perfectly
-// valid session, which is exactly the "logged out after ~1hr" symptom this
-// type exists to prevent.
-export type SessionRestoreResult =
-  | { status: "authenticated"; accessToken: string; user: BackendUser }
-  | { status: "unauthenticated" }
-  | { status: "unknown" };
 
-// Shared in-flight promise so concurrent callers (several components
-// mounting at once, or the bootstrap restore racing a 401-triggered one)
-// collapse into a single network call — the backend rotates the refresh
-// token cookie on every call, so firing it twice in parallel would have the
-// second request racing the first's just-rotated cookie.
-let restoreInFlight: Promise<SessionRestoreResult> | null = null;
 
 /**
  * Attempts to restore a session purely from the httpOnly refresh-token
@@ -480,7 +501,10 @@ export async function getTrainerDashboardApi(): Promise<TrainerDashboardResponse
  * Forgot Password API: POST /auth/forgot-password
  */
 export async function forgotPasswordApi(email: string): Promise<{ success: boolean; message: string }> {
-  const response = await api.post<{ success: boolean; message: string }>("/auth/forgot-password", { email });
+  const response = await api.post<{ success: boolean; message: string }>("/auth/forgot-password", {
+    email,
+    appType: "trainer",
+  });
   return response.data;
 }
 
@@ -629,14 +653,6 @@ export function clearTrainerFiltersCache(): void {
   trainerFiltersInFlight = null;
 }
 
-/**
- * Lightweight Course Filter API: GET /api/trainer/filters/courses
- * Reuses the combined filter API to avoid redundant network calls.
- */
-export async function getTrainerCourseFiltersApi(): Promise<CourseFilterItem[]> {
-  const data = await getTrainerFiltersApi();
-  return data.courses;
-}
 
 /**
  * Lightweight Batch Filter API: GET /api/trainer/filters/batches?courseId=...
@@ -689,6 +705,8 @@ export interface ModulesResponse {
   success: boolean;
   message?: string;
   modules: BackendModuleItem[];
+  pagination?: PaginationMetadata;
+  total?: number;
 }
 
 export interface CreateModulePayload {
@@ -705,12 +723,33 @@ export interface CreateModuleResponse {
 }
 
 /**
- * Real Modules API: GET /modules?courseId=...
+ * Real Modules API: GET /modules?courseId=...&batchId=...&search=...&page=...&limit=...
  * Bearer JWT authenticated. Scoped to trainer's authorized courses.
  */
-export async function getModulesApi(courseId?: string): Promise<ModulesResponse> {
+export async function getModulesApi(
+  params?:
+    | {
+        courseId?: string;
+        batchId?: string;
+        search?: string;
+        page?: number;
+        limit?: number;
+      }
+    | string
+): Promise<ModulesResponse> {
+  const queryParams: Record<string, string | number> = {};
+  if (typeof params === "string") {
+    if (params) queryParams.courseId = params;
+  } else if (params) {
+    if (params.page && params.page > 0) queryParams.page = params.page;
+    if (params.limit && params.limit > 0) queryParams.limit = params.limit;
+    if (params.courseId && params.courseId !== "all" && params.courseId !== "none") queryParams.courseId = params.courseId;
+    if (params.batchId && params.batchId !== "all") queryParams.batchId = params.batchId;
+    if (params.search && params.search.trim()) queryParams.search = params.search.trim();
+  }
+
   const response = await api.get<ModulesResponse>("/modules", {
-    params: courseId ? { courseId } : undefined
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
   return response.data;
 }
@@ -915,18 +954,6 @@ export async function getTrainerBatchesPaginatedApi(params?: {
 
 // ─── Lessons for Module ───────────────────────────────────────────────────────
 
-/**
- * Real Lessons for Module API: GET /lessons?moduleId=...&courseId=...
- */
-export async function getLessonsForModuleApi(
-  moduleId: string,
-  courseId?: string
-): Promise<BackendLessonItem[]> {
-  const response = await api.get<LessonsResponse>("/lessons", {
-    params: { moduleId, ...(courseId ? { courseId } : {}) }
-  });
-  return response.data?.lessons || [];
-}
 
 // ─── Documents ────────────────────────────────────────────────────────────────
 
@@ -955,6 +982,8 @@ export interface DocumentsResponse {
   success: boolean;
   message?: string;
   documents: BackendDocumentItem[];
+  pagination?: PaginationMetadata;
+  total?: number;
 }
 
 export interface UploadDocumentResponse {
@@ -973,9 +1002,21 @@ export async function getDocumentsApi(params?: {
   lessonId?: string;
   batchId?: string;
   search?: string;
+  page?: number;
+  limit?: number;
 }): Promise<DocumentsResponse> {
-  const response = await api.get<DocumentsResponse>("/documents", {
-    params: params ?? undefined
+  const queryParams: Record<string, string | number> = {};
+  if (params) {
+    if (params.page && params.page > 0) queryParams.page = params.page;
+    if (params.limit && params.limit > 0) queryParams.limit = params.limit;
+    if (params.courseId && params.courseId !== "all" && params.courseId !== "none") queryParams.courseId = params.courseId;
+    if (params.batchId && params.batchId !== "all") queryParams.batchId = params.batchId;
+    if (params.moduleId && params.moduleId !== "all") queryParams.moduleId = params.moduleId;
+    if (params.lessonId && params.lessonId !== "all") queryParams.lessonId = params.lessonId;
+    if (params.search && params.search.trim()) queryParams.search = params.search.trim();
+  }
+  const response = await api.get<DocumentsResponse>("/api/documents", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
   return response.data;
 }
@@ -985,7 +1026,7 @@ export async function getDocumentsApi(params?: {
  * Multipart form data containing: file, title, courseId, batchId, moduleId, lessonId
  */
 export async function uploadDocumentApi(formData: FormData): Promise<UploadDocumentResponse> {
-  const response = await api.post<UploadDocumentResponse>("/documents/upload", formData, {
+  const response = await api.post<UploadDocumentResponse>("/api/documents/upload", formData, {
     headers: {
       "Content-Type": "multipart/form-data"
     }
@@ -1001,7 +1042,7 @@ export async function updateDocumentApi(
   title: string
 ): Promise<{ success: boolean; message: string; document?: BackendDocumentItem }> {
   const response = await api.put<{ success: boolean; message: string; document?: BackendDocumentItem }>(
-    `/documents/${id}`,
+    `/api/documents/${id}`,
     { title }
   );
   return response.data;
@@ -1011,7 +1052,7 @@ export async function updateDocumentApi(
  * Real Delete Document API: DELETE /documents/:id
  */
 export async function deleteDocumentApi(id: string): Promise<{ success: boolean; message: string }> {
-  const response = await api.delete<{ success: boolean; message: string }>(`/documents/${id}`);
+  const response = await api.delete<{ success: boolean; message: string }>(`/api/documents/${id}`);
   return response.data;
 }
 
@@ -1104,26 +1145,13 @@ export async function getTrainerQuizzesApi(
   return { quizzes, pagination, total };
 }
 
-/**
- * Real Quizzes API: GET /quizzes / /api/trainer/quizzes
- * Scoped to trainer's authorized quizzes or optional filters.
- */
-export async function getQuizzesApi(
-  params?: TrainerQuizFilterParams
-): Promise<BackendQuizItem[] & { pagination?: PaginationMetadata; total?: number }> {
-  const result = await getTrainerQuizzesApi(params);
-  const arr = [...result.quizzes] as BackendQuizItem[] & { pagination?: PaginationMetadata; total?: number };
-  arr.pagination = result.pagination;
-  arr.total = result.total;
-  return arr;
-}
 
 /**
  * Real Create Quiz API: POST /quizzes/upload
  * Multipart form data containing: file, title, batchId, courseId, moduleId, numberOfQuestions, status
  */
 export async function createQuizApi(formData: FormData): Promise<CreateQuizResponse> {
-  const response = await api.post<CreateQuizResponse>("/quizzes/upload", formData, {
+  const response = await api.post<CreateQuizResponse>("/api/quizzes/upload", formData, {
     headers: {
       "Content-Type": "multipart/form-data"
     }
@@ -1135,7 +1163,7 @@ export async function createQuizApi(formData: FormData): Promise<CreateQuizRespo
  * Real Delete Quiz API: DELETE /quizzes/:id
  */
 export async function deleteQuizApi(id: string): Promise<{ success: boolean; message: string }> {
-  const response = await api.delete<{ success: boolean; message: string }>(`/quizzes/${id}`);
+  const response = await api.delete<{ success: boolean; message: string }>(`/api/quizzes/${id}`);
   return response.data;
 }
 
@@ -1155,7 +1183,7 @@ export async function updateQuizApi(
   id: string,
   payload: UpdateQuizPayload
 ): Promise<{ success: boolean; message: string }> {
-  const response = await api.put<{ success: boolean; message: string }>(`/quizzes/${id}`, payload);
+  const response = await api.put<{ success: boolean; message: string }>(`/api/quizzes/${id}`, payload);
   return response.data;
 }
 
@@ -1204,7 +1232,7 @@ export interface QuizResultsResponse {
  */
 export async function getQuizResultsApi(quizId: string): Promise<QuizResultsResponse> {
   const cleanId = quizId.trim();
-  const response = await api.get<QuizResultsResponse>(`/quizzes/${encodeURIComponent(cleanId)}/results`);
+  const response = await api.get<QuizResultsResponse>(`/api/quizzes/${encodeURIComponent(cleanId)}/results`);
   return response.data;
 }
 
@@ -1218,7 +1246,7 @@ export async function getTraineeQuizzesApi(params?: {
   batchId?: string;
   moduleId?: string;
 }): Promise<BackendQuizItem[]> {
-  const response = await api.get<QuizzesResponse>("/trainee/quizzes", {
+  const response = await api.get<QuizzesResponse>("/api/trainee/quizzes", {
     params: params ?? undefined
   });
   return response.data?.quizzes || [];
@@ -1275,6 +1303,8 @@ export interface AssignmentsResponse {
   success: boolean;
   message?: string;
   assignments: AssignmentItem[];
+  pagination?: PaginationMetadata;
+  total?: number;
 }
 
 export interface CreateAssignmentPayload {
@@ -1331,42 +1361,39 @@ export interface ScoreSubmissionResponse {
 export async function getAssignmentsApi(params?: {
   courseId?: string;
   batchId?: string;
-}): Promise<AssignmentItem[]> {
-  const data = await deduplicatedGet<AssignmentsResponse>("/assignments", {
-    params: params ?? undefined
+  search?: string;
+  page?: number;
+  limit?: number;
+}): Promise<AssignmentsResponse> {
+  const queryParams: Record<string, string | number> = {};
+  if (params) {
+    if (params.page && params.page > 0) queryParams.page = params.page;
+    if (params.limit && params.limit > 0) queryParams.limit = params.limit;
+    if (params.courseId && params.courseId !== "all" && params.courseId !== "none" && params.courseId !== "ALL") queryParams.courseId = params.courseId;
+    if (params.batchId && params.batchId !== "all" && params.batchId !== "ALL") queryParams.batchId = params.batchId;
+    if (params.search && params.search.trim()) queryParams.search = params.search.trim();
+  }
+  const data = await deduplicatedGet<AssignmentsResponse>("/api/assignments", {
+    params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
-  return data?.assignments || [];
+  return data || { success: true, assignments: [] };
 }
 
-/**
- * Real Single Assignment API: GET /assignments/:id
- */
-export async function getAssignmentByIdApi(id: string): Promise<AssignmentItem | null> {
-  const data = await deduplicatedGet<{ success: boolean; assignment: AssignmentItem }>(`/assignments/${id}`);
-  return data?.assignment || null;
-}
 
 /**
  * Real Create Assignment API: POST /assignments (or /api/assignments)
  */
 export async function createAssignmentApi(payload: CreateAssignmentPayload): Promise<CreateAssignmentResponse> {
-  const response = await api.post<CreateAssignmentResponse>("/assignments", payload);
+  const response = await api.post<CreateAssignmentResponse>("/api/assignments", payload);
   return response.data;
 }
 
-/**
- * Real Delete Assignment API: DELETE /assignments/:id
- */
-export async function deleteAssignmentApi(id: string): Promise<{ success: boolean; message: string }> {
-  const response = await api.delete<{ success: boolean; message: string }>(`/assignments/${id}`);
-  return response.data;
-}
 
 /**
  * Real Assignment Submissions API: GET /assignments/:assignmentId/submissions
  */
 export async function getAssignmentSubmissionsApi(assignmentId: string): Promise<AssignmentSubmissionItem[]> {
-  const data = await deduplicatedGet<SubmissionsResponse>(`/assignments/${assignmentId}/submissions`);
+  const data = await deduplicatedGet<SubmissionsResponse>(`/api/assignments/${assignmentId}/submissions`);
   return data?.submissions || [];
 }
 
@@ -1379,7 +1406,7 @@ export async function scoreAssignmentSubmissionApi(
   payload: ScoreSubmissionPayload
 ): Promise<ScoreSubmissionResponse> {
   const response = await api.put<ScoreSubmissionResponse>(
-    `/assignments/${assignmentId}/submissions/${submissionId}/score`,
+    `/api/assignments/${assignmentId}/submissions/${submissionId}/score`,
     payload
   );
   return response.data;
@@ -1492,7 +1519,7 @@ export async function getTraineesApi(params?: {
       batchName: bName,
       courseId: cId,
       courseName: cName,
-      mode: t.mode || t.batch?.mode || 'online',
+      mode: (t.mode || t.batch?.mode || t.courseType || 'online').toLowerCase(),
       progressPct,
       completedModules,
       totalModules,
@@ -1659,6 +1686,7 @@ export async function getTrainerAttendanceApi(params?: {
   batchId?: string;
   courseId?: string;
   date?: string;
+  search?: string;
   page?: number;
   limit?: number;
 }): Promise<TrainerAttendanceItem[]> {
@@ -1666,6 +1694,7 @@ export async function getTrainerAttendanceApi(params?: {
   if (params?.batchId && params.batchId !== "all") queryParams.batchId = params.batchId;
   if (params?.courseId && params.courseId !== "all" && params.courseId !== "none") queryParams.courseId = params.courseId;
   if (params?.date && params.date !== "all") queryParams.date = params.date;
+  if (params?.search && params.search.trim()) queryParams.search = params.search.trim();
   if (params?.page) queryParams.page = params.page;
   if (params?.limit) queryParams.limit = params.limit;
   const res = await deduplicatedGet<any>("/api/trainer/attendance", {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Layers,
   Clock,
@@ -143,12 +143,14 @@ export default function MyCourses() {
   const [filterCourses, setFilterCourses] = useState<CourseFilterItem[]>([]);
   const [filterBatches, setFilterBatches] = useState<BatchFilterItem[]>([]);
 
-  // Search, Filter, and Pagination States
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [selectedCourseFilter, setSelectedCourseFilter] = useState("all");
-  const [selectedBatchFilter, setSelectedBatchFilter] = useState("all");
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Search, Filter, and Pagination States initialized from URL
+  const [searchQuery, setSearchQuery] = useState(() => searchParams.get("search") || "");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("search") || "");
+  const [selectedCourseFilter, setSelectedCourseFilter] = useState(() => searchParams.get("courseId") || "all");
+  const [selectedBatchFilter, setSelectedBatchFilter] = useState(() => searchParams.get("batchId") || "all");
+  const [page, setPage] = useState<number>(() => Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1));
   const limit = 6;
   const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
 
@@ -176,6 +178,38 @@ export default function MyCourses() {
     }, 350);
     return () => clearTimeout(timer);
   }, [searchQuery]);
+
+  // Synchronize URL search params with active filters
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (debouncedSearch.trim()) next.set("search", debouncedSearch.trim());
+    if (selectedCourseFilter && selectedCourseFilter !== "all") next.set("courseId", selectedCourseFilter);
+    if (selectedBatchFilter && selectedBatchFilter !== "all") next.set("batchId", selectedBatchFilter);
+    if (page > 1) next.set("page", String(page));
+    setSearchParams(next, { replace: true });
+  }, [debouncedSearch, selectedCourseFilter, selectedBatchFilter, page, setSearchParams]);
+
+  // Sync external URL changes (e.g. back/forward navigation)
+  useEffect(() => {
+    const urlSearch = searchParams.get("search") || "";
+    const urlCourse = searchParams.get("courseId") || "all";
+    const urlBatch = searchParams.get("batchId") || "all";
+    const urlPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+
+    if (urlSearch !== debouncedSearch) {
+      setSearchQuery(urlSearch);
+      setDebouncedSearch(urlSearch);
+    }
+    if (urlCourse !== selectedCourseFilter) {
+      setSelectedCourseFilter(urlCourse);
+    }
+    if (urlBatch !== selectedBatchFilter) {
+      setSelectedBatchFilter(urlBatch);
+    }
+    if (urlPage !== page) {
+      setPage(urlPage);
+    }
+  }, [searchParams]);
 
   // Compute available batches for the dropdown based on selected course
   const availableBatches = useMemo(() => {

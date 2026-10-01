@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Plus,
   PencilLine,
@@ -47,7 +48,9 @@ import {
   type AssignmentSubmissionItem,
   type BatchFilterItem,
   type CourseFilterItem,
+  type PaginationMetadata,
 } from "@/services/api";
+import Pagination from "@/components/ui/Pagination";
 import { cn } from "@/lib/utils";
 
 function getInitials(name?: string): string {
@@ -80,23 +83,34 @@ function formatDate(dateStr?: string): string {
 }
 
 export default function Assignments() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlSearch = searchParams.get("search") || "";
+  const urlBatchId = searchParams.get("batchId") || "ALL";
+  const urlCourseId = searchParams.get("courseId") || "ALL";
+  const urlPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+
   // Reference data
   const [assignments, setAssignments] = useState<AssignmentItem[]>([]);
   const [batches, setBatches] = useState<BatchFilterItem[]>([]);
   const [courses, setCourses] = useState<CourseFilterItem[]>([]);
+  const [loadingRef, setLoadingRef] = useState(true);
 
   // Page state
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
 
   // Filters & Search
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedBatchId, setSelectedBatchId] = useState<string>("ALL");
-  const [selectedCourseId, setSelectedCourseId] = useState<string>("ALL");
+  const [searchQuery, setSearchQuery] = useState(urlSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(urlSearch);
+  const [selectedBatchId, setSelectedBatchId] = useState<string>(urlBatchId);
+  const [selectedCourseId, setSelectedCourseId] = useState<string>(urlCourseId);
 
-  // Assignment cards pagination
-  const CARDS_PER_PAGE = 6;
-  const [cardPage, setCardPage] = useState(0);
+  // Server-side pagination
+  const limit = 6;
+  const [page, setPage] = useState<number>(urlPage);
+  const [pagination, setPagination] = useState<PaginationMetadata | null>(null);
+
+  const isFirstMountRef = useRef(true);
 
   // Active assignment & submissions
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | null>(null);
@@ -114,33 +128,158 @@ export default function Assignments() {
 
   // Ref to detail view for smooth scrolling on card click
   const detailRef = useRef<HTMLDivElement>(null);
-
   const isMountedRef = useRef(true);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Initial Parallel Load: Assignments & Trainer Filters
+  // 1. Initial Load: Lightweight Trainer Filters (Once on mount)
   // ─────────────────────────────────────────────────────────────────────────────
-  const loadInitialData = useCallback(async () => {
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadFilters() {
+      try {
+        setLoadingRef(true);
+        const filtersRes = await getTrainerFiltersApi().catch((err) => {
+          console.warn("Failed to load trainer filters:", err);
+          return { courses: [] as CourseFilterItem[], batches: [] as BatchFilterItem[] };
+        });
+
+        if (!mounted) return;
+
+        setBatches(filtersRes.batches || []);
+        setCourses(filtersRes.courses || []);
+      } catch (err) {
+        console.error("Failed to load trainer filters:", err);
+      } finally {
+        if (mounted) setLoadingRef(false);
+      }
+    }
+
+    loadFilters();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 2. Debounce search query and reset page to 1
+  // ─────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Synchronize URL search params with active filters
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (debouncedSearch.trim()) next.set("search", debouncedSearch.trim());
+    if (selectedBatchId && selectedBatchId !== "ALL" && selectedBatchId !== "all") next.set("batchId", selectedBatchId);
+    if (selectedCourseId && selectedCourseId !== "ALL" && selectedCourseId !== "all" && selectedCourseId !== "none") {
+      next.set("courseId", selectedCourseId);
+    }
+    if (page > 1) next.set("page", String(page));
+    setSearchParams(next, { replace: true });
+  }, [debouncedSearch, selectedBatchId, selectedCourseId, page, setSearchParams]);
+
+  // Sync external URL changes
+  useEffect(() => {
+    const s = searchParams.get("search") || "";
+    const b = searchParams.get("batchId") || "ALL";
+    const c = searchParams.get("courseId") || "ALL";
+    const p = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+
+    if (s !== debouncedSearch) {
+      setSearchQuery(s);
+      setDebouncedSearch(s);
+    }
+    if (b !== selectedBatchId) {
+      setSelectedBatchId(b);
+    }
+    if (c !== selectedCourseId) {
+      setSelectedCourseId(c);
+    }
+    if (p !== page) {
+      setPage(p);
+    }
+  }, [searchParams]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 3. Canonical Batch → Course Resolution
+  // ─────────────────────────────────────────────────────────────────────────────
+  const selectedBatch = useMemo(() => {
+    if (selectedBatchId === "ALL" || selectedBatchId === "all") return null;
+    return batches.find((b) => b.id === selectedBatchId) || null;
+  }, [selectedBatchId, batches]);
+
+  const batchResolvedCourseId = useMemo(() => {
+    if (!selectedBatch) return null;
+    return selectedBatch.courseId || (selectedBatch as any).course?.id || null;
+  }, [selectedBatch]);
+
+  const batchResolvedCourse = useMemo(() => {
+    if (!batchResolvedCourseId) return null;
+    return (
+      courses.find((c) => (c.id || (c as any).courseId) === batchResolvedCourseId) || null
+    );
+  }, [batchResolvedCourseId, courses]);
+
+  const availableBatches = useMemo(() => {
+    if (selectedCourseId === "ALL" || selectedCourseId === "all" || !selectedCourseId) return batches;
+    return batches.filter((b) => b.courseId === selectedCourseId);
+  }, [batches, selectedCourseId]);
+
+  const batchHasNoCourse = Boolean(selectedBatch && !batchResolvedCourseId);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 4. Fetch Assignments from Backend (Server-Side Filtered & Paginated)
+  // ─────────────────────────────────────────────────────────────────────────────
+  const fetchAssignments = useCallback(async () => {
+    if (batchHasNoCourse) {
+      setAssignments([]);
+      setPagination(null);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
 
-      const [assignmentsRes, filtersRes] = await Promise.all([
-        getAssignmentsApi(),
-        getTrainerFiltersApi().catch((err) => {
-          console.warn("Failed to load trainer filters:", err);
-          return { courses: [] as CourseFilterItem[], batches: [] as BatchFilterItem[] };
-        }),
-      ]);
+      const res = await getAssignmentsApi({
+        courseId:
+          selectedCourseId !== "ALL" && selectedCourseId !== "all" && selectedCourseId !== "none"
+            ? selectedCourseId
+            : undefined,
+        batchId: selectedBatchId !== "ALL" && selectedBatchId !== "all" ? selectedBatchId : undefined,
+        search: debouncedSearch.trim() || undefined,
+        page,
+        limit,
+      });
 
       if (!isMountedRef.current) return;
 
-      setAssignments(assignmentsRes);
-      setBatches(filtersRes.batches || []);
-      setCourses(filtersRes.courses || []);
+      const list = res?.assignments || [];
+      setAssignments(list);
+      setPagination(res?.pagination || null);
+
+      if (list.length > 0) {
+        setActiveAssignmentId((prev) =>
+          !prev || !list.some((a) => a.id === prev) ? list[0].id : prev
+        );
+      } else {
+        setActiveAssignmentId(null);
+        setSubmissions([]);
+      }
     } catch (err: any) {
       if (!isMountedRef.current) return;
-      console.error("Failed to load assignments or reference data:", err);
+      console.error("Failed to load assignments:", err);
       const status = err?.response?.status || 500;
       const msg = err?.response?.data?.message || err?.message || "Failed to load assignments.";
       setError({ status, message: msg });
@@ -154,54 +293,25 @@ export default function Assignments() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [selectedCourseId, selectedBatchId, debouncedSearch, page, limit, batchHasNoCourse]);
 
   useEffect(() => {
     isMountedRef.current = true;
-    loadInitialData();
+    if (!loadingRef) {
+      fetchAssignments();
+    }
     return () => {
       isMountedRef.current = false;
     };
-  }, [loadInitialData]);
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 2. Canonical Batch → Course Resolution & Local Filter Dependency
-  // ─────────────────────────────────────────────────────────────────────────────
-  const selectedBatch = useMemo(() => {
-    if (selectedBatchId === "ALL") return null;
-    return batches.find((b) => b.id === selectedBatchId) || null;
-  }, [selectedBatchId, batches]);
-
-  // Derived course from the selected batch
-  const batchResolvedCourseId = useMemo(() => {
-    if (!selectedBatch) return null;
-    return selectedBatch.courseId || (selectedBatch as any).course?.id || null;
-  }, [selectedBatch]);
-
-  const batchResolvedCourse = useMemo(() => {
-    if (!batchResolvedCourseId) return null;
-    return (
-      courses.find((c) => (c.id || (c as any).courseId) === batchResolvedCourseId) || null
-    );
-  }, [batchResolvedCourseId, courses]);
-
-  // Dynamically filter available batches by selected course locally
-  const availableBatches = useMemo(() => {
-    if (selectedCourseId === "ALL" || !selectedCourseId) return batches;
-    return batches.filter((b) => b.courseId === selectedCourseId);
-  }, [batches, selectedCourseId]);
-
-  const batchHasNoCourse = Boolean(selectedBatch && !batchResolvedCourseId);
+  }, [loadingRef, fetchAssignments]);
 
   // Handle batch selection
   const handleBatchChange = (newBatchId: string) => {
+    setPage(1);
     setSelectedBatchId(newBatchId);
     setActiveSubmissionId(null);
-    setCardPage(0);
 
-    if (newBatchId === "ALL") {
-      // Keep course as ALL or current
-    } else {
+    if (newBatchId !== "ALL" && newBatchId !== "all") {
       const foundBatch = batches.find((b) => b.id === newBatchId);
       const targetCourseId = foundBatch?.courseId;
       if (targetCourseId) {
@@ -212,12 +322,11 @@ export default function Assignments() {
 
   // Handle course selection
   const handleCourseChange = (newCourseId: string) => {
+    setPage(1);
     setSelectedCourseId(newCourseId);
     setActiveSubmissionId(null);
-    setCardPage(0);
 
-    // If a batch is selected and doesn't belong to this course, reset batch
-    if (newCourseId !== "ALL" && selectedBatchId !== "ALL") {
+    if (newCourseId !== "ALL" && newCourseId !== "all" && selectedBatchId !== "ALL" && selectedBatchId !== "all") {
       const currentBatch = batches.find((b) => b.id === selectedBatchId);
       if (currentBatch && currentBatch.courseId && currentBatch.courseId !== newCourseId) {
         setSelectedBatchId("ALL");
@@ -228,74 +337,17 @@ export default function Assignments() {
   // Clear all filters
   const clearFilters = () => {
     setSearchQuery("");
+    setDebouncedSearch("");
     setSelectedBatchId("ALL");
     setSelectedCourseId("ALL");
     setActiveSubmissionId(null);
-    setCardPage(0);
+    setPage(1);
   };
 
-  const isFiltered = searchQuery.trim() !== "" || selectedBatchId !== "ALL" || selectedCourseId !== "ALL";
+  const isFiltered = searchQuery.trim() !== "" || (selectedBatchId !== "ALL" && selectedBatchId !== "all") || (selectedCourseId !== "ALL" && selectedCourseId !== "all");
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 3. Client-Side Filtering (Memoized for zero redundant requests)
-  // ─────────────────────────────────────────────────────────────────────────────
-  const filteredAssignments = useMemo(() => {
-    if (batchHasNoCourse) {
-      return [];
-    }
-
-    return assignments.filter((a) => {
-      // 1. Batch filter
-      if (selectedBatchId !== "ALL" && a.batchId !== selectedBatchId) {
-        return false;
-      }
-
-      // 2. Course filter
-      if (selectedCourseId !== "ALL" && selectedCourseId !== "" && a.courseId !== selectedCourseId) {
-        return false;
-      }
-
-      // 3. Search query filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.trim().toLowerCase();
-        const matchTitle = (a.title || "").toLowerCase().includes(q);
-        const matchCourse = (a.courseName || "").toLowerCase().includes(q);
-        const matchBatch = (a.batchName || "").toLowerCase().includes(q);
-        if (!matchTitle && !matchCourse && !matchBatch) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }, [assignments, selectedBatchId, selectedCourseId, searchQuery, batchHasNoCourse]);
-
-  // Reset card page when filteredAssignments changes
-  useEffect(() => {
-    setCardPage(0);
-  }, [searchQuery]);
-
-  // Paginated assignments for the card grid
-  const totalCardPages = Math.max(1, Math.ceil(filteredAssignments.length / CARDS_PER_PAGE));
-  const paginatedAssignments = useMemo(() => {
-    const start = cardPage * CARDS_PER_PAGE;
-    return filteredAssignments.slice(start, start + CARDS_PER_PAGE);
-  }, [filteredAssignments, cardPage, CARDS_PER_PAGE]);
-
-  // Keep active assignment in sync with filtered assignments
-  useEffect(() => {
-    if (filteredAssignments.length === 0) {
-      setActiveAssignmentId(null);
-      setSubmissions([]);
-      setActiveSubmissionId(null);
-      return;
-    }
-
-    if (!activeAssignmentId || !filteredAssignments.some((a) => a.id === activeAssignmentId)) {
-      setActiveAssignmentId(filteredAssignments[0].id);
-      setActiveSubmissionId(null);
-    }
-  }, [filteredAssignments, activeAssignmentId]);
+  const filteredAssignments = assignments;
+  const paginatedAssignments = assignments;
 
   // Active assignment object
   const activeAssignment = useMemo(() => {
@@ -387,8 +439,7 @@ export default function Assignments() {
         setFeedback("");
 
         // Refresh assignments to update submission and pending counts
-        const updated = await getAssignmentsApi();
-        setAssignments(updated);
+        await fetchAssignments();
       } else {
         toast.error(res.message || "Failed to publish result.");
       }
@@ -565,7 +616,7 @@ export default function Assignments() {
               ? "You do not have permission to view assignments. Please ensure you are logged in with an authorized trainer account."
               : error.message || "An unexpected error occurred while fetching assignments."}
           </p>
-          <Button variant="outline" className="mt-4" onClick={loadInitialData}>
+          <Button variant="outline" className="mt-4" onClick={fetchAssignments}>
             <RefreshCw className="mr-1.5 h-4 w-4" /> Try Again
           </Button>
         </div>
@@ -698,30 +749,18 @@ export default function Assignments() {
           </div>
 
           {/* Pagination Controls */}
-          {totalCardPages > 1 && (
-            <div className="flex items-center justify-center gap-3 pt-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCardPage((p) => Math.max(0, p - 1))}
-                disabled={cardPage === 0}
-                className="h-8 px-3 text-xs rounded-lg"
-              >
-                <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Previous
-              </Button>
-              <span className="text-xs font-medium text-[#6B5A52]">
-                Page {cardPage + 1} of {totalCardPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCardPage((p) => Math.min(totalCardPages - 1, p + 1))}
-                disabled={cardPage >= totalCardPages - 1}
-                className="h-8 px-3 text-xs rounded-lg"
-              >
-                Next <ChevronRight className="h-3.5 w-3.5 ml-1" />
-              </Button>
-            </div>
+          {pagination && (
+            <Pagination
+              page={pagination.page}
+              totalPages={pagination.totalPages}
+              total={pagination.total}
+              limit={pagination.limit}
+              hasNextPage={pagination.hasNextPage}
+              hasPreviousPage={pagination.hasPreviousPage}
+              onPageChange={(newPage) => setPage(newPage)}
+              loading={loading}
+              itemLabel="assignments"
+            />
           )}
 
           {/* ───────────────────────────────────────────────────────────────────── */}
@@ -946,7 +985,7 @@ export default function Assignments() {
       <AddAssignmentModal
         open={modalOpen}
         onOpenChange={setModalOpen}
-        onSuccess={loadInitialData}
+        onSuccess={fetchAssignments}
       />
     </div>
   );

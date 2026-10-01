@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -98,7 +98,15 @@ interface RosterEntry {
 
 export default function Attendance() {
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedBatchId = (location.state as { batchId?: string } | null)?.batchId;
+
+  const urlBatchId = searchParams.get("batchId") || requestedBatchId || "all";
+  const urlCourseId = searchParams.get("courseId") || "all";
+  const todayStr = localDateStr();
+  const urlDate = searchParams.get("date") || todayStr;
+  const urlSearch = searchParams.get("search") || "";
+  const urlPage = Math.max(0, parseInt(searchParams.get("page") || "0", 10) || 0);
 
   // Reference data from BigQuery / APIs
   const [batches, setBatches] = useState<BatchFilterItem[]>([]);
@@ -106,26 +114,80 @@ export default function Attendance() {
   const [loadingInitial, setLoadingInitial] = useState(true);
 
   // Filter state
-  const [selectedBatchId, setSelectedBatchId] = useState<string>("all");
-  const [selectedCourseId, setSelectedCourseId] = useState<string>("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedBatchId, setSelectedBatchId] = useState<string>(urlBatchId);
+  const [selectedCourseId, setSelectedCourseId] = useState<string>(urlCourseId);
+  const [searchQuery, setSearchQuery] = useState(urlSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(urlSearch);
 
   // Roster & Attendance state
   const [loadingRoster, setLoadingRoster] = useState(false);
   const [roster, setRoster] = useState<RosterEntry[]>([]);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(urlPage);
   const [saving, setSaving] = useState(false);
   const [finalized, setFinalized] = useState<Record<string, boolean>>({});
   const [savingRowKey, setSavingRowKey] = useState<string | null>(null);
 
   // Selected register date
-  const todayStr = localDateStr();
-  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const [selectedDate, setSelectedDate] = useState<string>(urlDate);
   const isToday = selectedDate === todayStr;
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
   // Track whether the selected batch (or any authorized batch) has an actual session on selectedDate
   const [hasSessionForSelectedDate, setHasSessionForSelectedDate] = useState<boolean>(true);
+
+  const isFirstMountRef = useRef(true);
+
+  // Debounce search query and reset page to 0
+  useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(0);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Synchronize URL search params with active filters
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (debouncedSearch.trim()) next.set("search", debouncedSearch.trim());
+    if (selectedBatchId && selectedBatchId !== "all") next.set("batchId", selectedBatchId);
+    if (selectedCourseId && selectedCourseId !== "all" && selectedCourseId !== "none") {
+      next.set("courseId", selectedCourseId);
+    }
+    if (selectedDate && selectedDate !== todayStr) next.set("date", selectedDate);
+    if (page > 0) next.set("page", String(page));
+    setSearchParams(next, { replace: true });
+  }, [debouncedSearch, selectedBatchId, selectedCourseId, selectedDate, page, todayStr, setSearchParams]);
+
+  // Sync external URL changes
+  useEffect(() => {
+    const s = searchParams.get("search") || "";
+    const b = searchParams.get("batchId") || "all";
+    const c = searchParams.get("courseId") || "all";
+    const d = searchParams.get("date") || todayStr;
+    const p = Math.max(0, parseInt(searchParams.get("page") || "0", 10) || 0);
+
+    if (s !== debouncedSearch) {
+      setSearchQuery(s);
+      setDebouncedSearch(s);
+    }
+    if (b !== selectedBatchId) {
+      setSelectedBatchId(b);
+    }
+    if (c !== selectedCourseId) {
+      setSelectedCourseId(c);
+    }
+    if (d !== selectedDate) {
+      setSelectedDate(d);
+    }
+    if (p !== page) {
+      setPage(p);
+    }
+  }, [searchParams]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // 1. Parallel Initial Load: Lightweight Batches & Courses Filters
@@ -209,7 +271,7 @@ export default function Attendance() {
   // 3. Fetch Roster & Existing Attendance via Canonical API
   // ─────────────────────────────────────────────────────────────────────────────
   const fetchRosterData = useCallback(
-    async (batchId: string, courseId: string, dateStr: string) => {
+    async (batchId: string, courseId: string, dateStr: string, searchStr?: string) => {
       try {
         setLoadingRoster(true);
 
@@ -217,6 +279,7 @@ export default function Attendance() {
           batchId: batchId !== "all" ? batchId : undefined,
           courseId: courseId !== "all" && courseId !== "none" ? courseId : undefined,
           date: dateStr,
+          search: searchStr ? searchStr.trim() : undefined,
         });
 
         // If today, or if records exist, or trainees found, allow taking/viewing attendance
@@ -267,10 +330,10 @@ export default function Attendance() {
 
   useEffect(() => {
     if (!loadingInitial) {
-      fetchRosterData(selectedBatchId, selectedCourseId, selectedDate);
+      fetchRosterData(selectedBatchId, selectedCourseId, selectedDate, debouncedSearch);
       setPage(0);
     }
-  }, [selectedBatchId, selectedCourseId, selectedDate, loadingInitial, fetchRosterData]);
+  }, [selectedBatchId, selectedCourseId, selectedDate, debouncedSearch, loadingInitial, fetchRosterData]);
 
   const handleDateChange = (newDate: string) => {
     if (!newDate) return;
@@ -315,6 +378,7 @@ export default function Attendance() {
     setSelectedBatchId("all");
     setSelectedCourseId("all");
     setSearchQuery("");
+    setDebouncedSearch("");
     setPage(0);
   };
 
@@ -466,26 +530,28 @@ export default function Attendance() {
   const counts = useMemo(() => {
     // If no class/session occurred on the selected date, all attendance counts are strictly 0
     if (!hasSessionForSelectedDate) {
-      return { total: roster.length, present: 0, absent: 0, late: 0 };
+      return { total: roster.length, present: 0, absent: 0, late: 0, marked: 0 };
     }
     // Count every trainee whose current status is Present, Absent, or Late strictly from real records
     const present = roster.filter((r) => r.hasRecord && r.status === "P").length;
     const absent = roster.filter((r) => r.hasRecord && r.status === "A").length;
     const late = roster.filter((r) => r.hasRecord && r.status === "L").length;
-    return { total: roster.length, present, absent, late };
+    const marked = present + absent + late;
+    return { total: roster.length, present, absent, late, marked };
   }, [roster, hasSessionForSelectedDate]);
 
-  // Independent percentage calculations derived strictly from real attendance records
+  // Attendance rate among trainees whose status has already been recorded (matching backend business rule)
+  // Present / Marked trainees * 100
+  const attendanceRate =
+    counts.marked > 0 ? Math.round((counts.present / counts.marked) * 100) : 0;
   const presentPercentage =
-    counts.total > 0 ? Math.round((counts.present / counts.total) * 100) : 0;
+    counts.marked > 0 ? Math.round((counts.present / counts.marked) * 100) : 0;
   const absentPercentage =
-    counts.total > 0 ? Math.round((counts.absent / counts.total) * 100) : 0;
+    counts.marked > 0 ? Math.round((counts.absent / counts.marked) * 100) : 0;
   const latePercentage =
-    counts.total > 0 ? Math.round((counts.late / counts.total) * 100) : 0;
+    counts.marked > 0 ? Math.round((counts.late / counts.marked) * 100) : 0;
 
-  // Overall Attendance Rate strictly: Present trainees / total authorized unique trainees
-  const overallAttendanceRate = presentPercentage;
-  const attendanceRate = overallAttendanceRate;
+  const overallAttendanceRate = attendanceRate;
 
   const totalPages = Math.max(1, Math.ceil(filteredRoster.length / PAGE_SIZE));
   const pageStart = page * PAGE_SIZE;
@@ -687,7 +753,7 @@ export default function Attendance() {
 
           <div className="mt-4 max-w-sm">
             <div className="flex items-center justify-between text-xs font-semibold text-[#8C7A70]">
-              <span>Overall Attendance Today</span>
+              <span>Overall Attendance Today ({counts.marked}/{counts.total} marked)</span>
               <span className="text-sm font-bold text-[#3A2A22]">{attendanceRate}%</span>
             </div>
             <ProgressBar value={attendanceRate} className="mt-1.5 h-2" />
@@ -704,7 +770,7 @@ export default function Attendance() {
             TOTAL TRAINEES
           </p>
           <p className="mt-2 text-3xl font-bold text-[#3A2A22]">{counts.total}</p>
-          <p className="mt-1 text-xs font-semibold text-transparent select-none" aria-hidden="true">&nbsp;</p>
+          <p className="mt-1 text-xs font-semibold text-[#8C7A70]">{counts.marked} of {counts.total} marked</p>
         </Card>
 
         <Card className="border-[#F5E2DA] bg-[#DE896A] p-5 text-white shadow-sm shadow-[#DE896A]/20">
