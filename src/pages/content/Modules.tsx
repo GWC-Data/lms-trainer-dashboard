@@ -554,7 +554,7 @@ export default function Modules() {
           ) : (
             modules.map((m, idx) => {
               const deliveryMode = m.deliveryMode || "online";
-              const moduleTitle = m.title || m.moduleName || `Module ${idx + 1}`;
+              const moduleTitle = m.moduleName || m.title || `Module ${idx + 1}`;
 
               return (
                 <div

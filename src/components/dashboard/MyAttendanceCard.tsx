@@ -11,7 +11,7 @@ interface MyAttendanceCardProps {
 }
 
 export default function MyAttendanceCard({ summary, className }: MyAttendanceCardProps) {
-  const myAttendance = summary.myAttendance || summary.trainerAttendance;
+  const myAttendance = summary.myAttendance;
   const hasRecords = Boolean(myAttendance && myAttendance.totalSessions > 0);
   const attendancePct =
     hasRecords && typeof myAttendance?.percentage === "number"

@@ -4,11 +4,11 @@ import { Card } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
 
 interface LearningOverviewCardProps {
-  overallAvgProgress: number;
+  overallAvgProgress?: number;
   className?: string;
 }
 
-export default function LearningOverviewCard({ overallAvgProgress, className }: LearningOverviewCardProps) {
+export default function LearningOverviewCard({ className }: LearningOverviewCardProps) {
   return (
     <Card className={cn("w-full min-w-0 max-w-full rounded-xl sm:rounded-2xl border border-[#F0DED4] bg-white p-3.5 sm:p-4 shadow-xs bento-card flex flex-col justify-between", className)}>
       <div>
@@ -21,9 +21,6 @@ export default function LearningOverviewCard({ overallAvgProgress, className }: 
               Learning Overview
             </span>
           </div>
-          <span className="text-[11px] font-bold text-[#DE896A] bg-[#FFF8F6] border border-[#F5D1C4] px-2 py-0.5 rounded-full">
-            {overallAvgProgress}% Avg
-          </span>
         </div>
 
         <div className="mt-2.5">

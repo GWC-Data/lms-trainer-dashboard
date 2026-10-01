@@ -429,13 +429,10 @@ export interface DashboardSummary {
   activeBatches: number;
   totalTrainees: number;
   upcomingClasses: number;
-  onlineBatches?: number;
-  offlineBatches?: number;
   atRiskTrainees?: number;
   pendingEvaluations?: number;
   averageAttendance?: number;
   myAttendance?: TrainerAttendanceSummary;
-  trainerAttendance?: TrainerAttendanceSummary;
 }
 
 export interface DashboardCourse {
@@ -453,7 +450,8 @@ export interface DashboardCourse {
 
 export interface DashboardScheduleItem {
   id: string;
-  batch: string;
+  batchName: string;
+  batch?: string;
   batchCode?: string;
   date: string;
   time: string;
@@ -963,10 +961,10 @@ export interface BackendDocumentItem {
   fileUrl: string;
   fileType?: string;
   fileSize?: number;
-  courseId: string;
+  courseId?: string;
   batchId?: string;
-  moduleId: string;
-  lessonId: string;
+  moduleId?: string;
+  lessonId?: string;
   uploadedBy?: string;
   uploadedAt?: string;
   createdAt?: string;
