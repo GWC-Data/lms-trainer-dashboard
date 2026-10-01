@@ -501,7 +501,10 @@ export async function getTrainerDashboardApi(): Promise<TrainerDashboardResponse
  * Forgot Password API: POST /auth/forgot-password
  */
 export async function forgotPasswordApi(email: string): Promise<{ success: boolean; message: string }> {
-  const response = await api.post<{ success: boolean; message: string }>("/auth/forgot-password", { email });
+  const response = await api.post<{ success: boolean; message: string }>("/auth/forgot-password", {
+    email,
+    appType: "trainer",
+  });
   return response.data;
 }
 
@@ -1516,7 +1519,7 @@ export async function getTraineesApi(params?: {
       batchName: bName,
       courseId: cId,
       courseName: cName,
-      mode: t.mode || t.batch?.mode || 'online',
+      mode: (t.mode || t.batch?.mode || t.courseType || 'online').toLowerCase(),
       progressPct,
       completedModules,
       totalModules,

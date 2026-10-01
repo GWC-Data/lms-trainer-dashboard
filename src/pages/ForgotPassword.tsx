@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import type { FormEvent } from "react";
 import { Link, Navigate } from "react-router-dom";
 import {
@@ -35,6 +35,7 @@ export default function ForgotPassword() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   if (isAuthenticated) {
     return <Navigate to="/" replace />;
@@ -53,11 +54,14 @@ export default function ForgotPassword() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (isSubmittingRef.current || isSubmitting) return;
+
     setTouched(true);
     setSubmitError(null);
 
     if (emailError) return;
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
       const res = await forgotPasswordApi(email);
@@ -75,6 +79,7 @@ export default function ForgotPassword() {
         setSubmitError("Network connection error. Please try again.");
       }
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   }

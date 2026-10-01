@@ -301,9 +301,11 @@ const Calendar: React.FC = () => {
     };
   }, []);
 
-  // Keep form date in sync when user picks a date
+  // Keep form date in sync when user picks a date (clamping past dates to today)
   useEffect(() => {
-    setFormEventDate(selectedDate.format("YYYY-MM-DD"));
+    const todayStr = moment().format("YYYY-MM-DD");
+    const selDateStr = selectedDate.format("YYYY-MM-DD");
+    setFormEventDate(selDateStr < todayStr ? todayStr : selDateStr);
   }, [selectedDate]);
 
   // Keep form batch in sync with the actively selected batch
@@ -384,6 +386,12 @@ const Calendar: React.FC = () => {
     }
     if (!formEventDate) {
       toast.error("Please select an event date.");
+      return;
+    }
+
+    const todayStr = moment().format("YYYY-MM-DD");
+    if (formEventDate < todayStr) {
+      toast.error("Events cannot be scheduled for a past date.");
       return;
     }
 
@@ -1194,6 +1202,7 @@ const Calendar: React.FC = () => {
                   </label>
                   <input
                     type="date"
+                    min={moment().format("YYYY-MM-DD")}
                     value={formEventDate}
                     onChange={(e) => setFormEventDate(e.target.value)}
                     className="w-full text-sm bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#DE6841]"
