@@ -38,6 +38,7 @@ import {
   getDocumentsApi,
   getTrainerFiltersApi,
   deleteDocumentApi,
+  downloadDocumentFileApi,
   type BackendDocumentItem,
   type BatchFilterItem,
   type CourseFilterItem,
@@ -298,7 +299,18 @@ export default function Documents() {
     }
   }
 
-  function handleDownload(d: BackendDocumentItem) {
+  async function handleDownload(d: BackendDocumentItem) {
+    if (d.id) {
+      try {
+        const blob = await downloadDocumentFileApi(d.id, false);
+        const url = URL.createObjectURL(blob);
+        triggerDownload(url, d.title);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return;
+      } catch (err) {
+        console.warn("Direct API download fallback to URL:", err);
+      }
+    }
     if (d.fileUrl) {
       triggerDownload(d.fileUrl, d.title);
     }

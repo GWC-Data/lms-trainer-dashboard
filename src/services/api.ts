@@ -1139,6 +1139,43 @@ export async function deleteDocumentApi(id: string): Promise<{ success: boolean;
   return response.data;
 }
 
+/**
+ * Real Download Document File API: GET /api/documents/:id/download
+ * Used to stream/fetch document bytes from GCP storage via authenticated backend route.
+ */
+export async function downloadDocumentFileApi(id: string, inline = false): Promise<Blob> {
+  const response = await api.get(`/api/documents/${id}/download`, {
+    params: inline ? { inline: 1 } : undefined,
+    responseType: "blob",
+  });
+  return response.data;
+}
+
+/**
+ * Retrieves the document's file bytes as a Blob for in-app preview or download.
+ * Tries direct fetch from fileUrl first; falls back to the authenticated download API
+ * if direct access is restricted by CORS or private bucket ACLs.
+ */
+export async function fetchDocumentBlob(doc: BackendDocumentItem): Promise<Blob> {
+  if (doc.fileUrl) {
+    try {
+      const directRes = await fetch(doc.fileUrl, { method: "GET" });
+      if (directRes.ok) {
+        return await directRes.blob();
+      }
+    } catch {
+      // Direct fetch was blocked by browser/CORS or bucket policy.
+      // Fall through to existing authenticated download endpoint.
+    }
+  }
+
+  if (doc.id) {
+    return await downloadDocumentFileApi(doc.id, true);
+  }
+
+  throw new Error("No accessible file URL or document identifier found.");
+}
+
 // ─── Quizzes ──────────────────────────────────────────────────────────────────
 
 export interface BackendQuizItem {
