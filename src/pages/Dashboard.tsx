@@ -92,8 +92,6 @@ export default function Dashboard() {
     activeBatches: 0,
     totalTrainees: 0,
     upcomingClasses: 0,
-    onlineBatches: 0,
-    offlineBatches: 0,
     atRiskTrainees: 0,
     pendingEvaluations: 0,
     averageAttendance: 0,
@@ -102,14 +100,6 @@ export default function Dashboard() {
   const courses = dashboardData?.courses || [];
   const upcomingSchedule = dashboardData?.upcomingSchedule || [];
   const traineesNeedingSupport = dashboardData?.traineesNeedingSupport || [];
-
-  // Calculate overall average course progress
-  const overallAvgProgress =
-    courses.length > 0
-      ? Math.round(
-          courses.reduce((acc, c) => acc + (c.avgProgress || 0), 0) / courses.length
-        )
-      : 0;
 
   const stats = [
     {
@@ -201,7 +191,7 @@ export default function Dashboard() {
           <MyAttendanceCard summary={summary} className="h-full" />
         </div>
         <div className="min-w-0 flex flex-col">
-          <LearningOverviewCard overallAvgProgress={overallAvgProgress} className="h-full" />
+          <LearningOverviewCard className="h-full" />
         </div>
         <div className="min-w-0 flex flex-col md:col-span-2 min-[1200px]:col-span-1">
           <SupportTraineeCard

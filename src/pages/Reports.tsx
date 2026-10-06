@@ -189,7 +189,7 @@ export default function Reports() {
               <SelectContent>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.name || (b as any).batchName)}
+                    {cleanDisplayString(b.batchName || b.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -228,7 +228,7 @@ export default function Reports() {
                   <span className="text-3xl font-bold text-[#3A2A22]">{avgCompletion}%</span>
                 </div>
                 <p className="mt-2 text-xs text-[#B7A79D]">
-                  {selectedBatch ? (selectedBatch.name || (selectedBatch as any).batchName) : "In selected batch"}
+                  {selectedBatch ? (selectedBatch.batchName || selectedBatch.name) : "In selected batch"}
                 </p>
               </CardContent>
             </Card>

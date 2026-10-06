@@ -31,9 +31,9 @@ export default function ScheduleCard({
             <p className="text-[11px] text-[#8C7A70] truncate">Timeline of scheduled classes</p>
           </div>
         </div>
-        {upcomingSchedule.length > 0 && upcomingSchedule[0].batchCode && (
+        {upcomingSchedule.length > 0 && upcomingSchedule[0].batchName && (
           <Badge tone="neutral" className="text-[9.5px] font-semibold shrink-0 self-start sm:self-center">
-            Batch {upcomingSchedule[0].batchCode}
+            {upcomingSchedule[0].batchName}
           </Badge>
         )}
       </CardHeader>
@@ -71,9 +71,9 @@ export default function ScheduleCard({
                           Completed
                         </Badge>
                       )}
-                      {item.batch && (
+                      {(item.batchName || item.batch) && (
                         <span className="text-[10.5px] font-semibold text-[#7C695E]">
-                          {item.batch}
+                          {item.batchName || item.batch}
                         </span>
                       )}
                     </div>

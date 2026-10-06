@@ -21,6 +21,8 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
@@ -80,6 +82,23 @@ function formatDate(dateStr?: string): string {
   } catch {
     return dateStr;
   }
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function triggerDownload(url: string, filename?: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  if (filename) a.download = filename;
+  a.target = "_blank";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 export default function Assignments() {
@@ -519,7 +538,7 @@ export default function Assignments() {
                 <SelectItem value="ALL">All Batches</SelectItem>
                 {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.name || (b as any).batchName)}
+                    {cleanDisplayString(b.batchName || b.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -539,7 +558,7 @@ export default function Assignments() {
                 <SelectItem value="ALL">All Courses</SelectItem>
                 {courses.map((c) => (
                   <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
-                    {cleanDisplayString(c.name || (c as any).courseName)}
+                    {cleanDisplayString(c.courseName || c.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -731,6 +750,41 @@ export default function Assignments() {
                       </span>
                     </div>
 
+                    {a.attachmentUrl && (
+                      <div className="mt-2.5 flex items-center justify-between rounded-lg bg-[#FFFBF9] border border-[#F5E2DA] px-2.5 py-1.5 text-xs">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <FileText className="h-3.5 w-3.5 shrink-0 text-[#DE896A]" />
+                          <span className="truncate font-medium text-[#233047] text-[11px]" title={a.attachmentName || "Attachment"}>
+                            {a.attachmentName || "Attachment"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 ml-1.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              window.open(a.attachmentUrl, "_blank", "noopener,noreferrer");
+                            }}
+                            className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10.5px] font-semibold text-[#DE896A] hover:bg-[#FBECE7] cursor-pointer"
+                            title="View attachment"
+                          >
+                            <Eye className="h-3 w-3" /> View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              triggerDownload(a.attachmentUrl!, a.attachmentName || a.title);
+                            }}
+                            className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10.5px] font-semibold text-[#8C7A70] hover:text-[#233047] hover:bg-[#F0EAE6] cursor-pointer"
+                            title="Download attachment"
+                          >
+                            <Download className="h-3 w-3" /> Download
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mt-3 flex items-center justify-between">
                       {isSelected ? (
                         <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#DE896A]">
@@ -789,6 +843,44 @@ export default function Assignments() {
                     </p>
                   </div>
                 </div>
+
+                {/* Attachment Section if present */}
+                {activeAssignment.attachmentUrl && (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#FFFBF9] border border-[#F5E2DA] p-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#FBECE7] text-[#DE896A]">
+                        <FileText className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-[#233047] truncate" title={activeAssignment.attachmentName || "Attachment"}>
+                          {activeAssignment.attachmentName || "Attachment"}
+                        </p>
+                        <p className="text-[11px] text-[#8C7A70]">
+                          {activeAssignment.attachmentType || "FILE"}
+                          {activeAssignment.attachmentSize ? ` · ${formatFileSize(activeAssignment.attachmentSize)}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.open(activeAssignment.attachmentUrl, "_blank", "noopener,noreferrer")}
+                        className="h-8 rounded-lg border-[#F0DED4] bg-white px-2.5 text-xs text-[#DE896A] hover:bg-[#FBECE7] cursor-pointer"
+                      >
+                        <Eye className="mr-1 h-3.5 w-3.5" /> View
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => triggerDownload(activeAssignment.attachmentUrl!, activeAssignment.attachmentName || activeAssignment.title)}
+                        className="h-8 rounded-lg border-[#F0DED4] bg-white px-2.5 text-xs text-[#8C7A70] hover:text-[#233047] hover:bg-[#F0EAE6] cursor-pointer"
+                      >
+                        <Download className="mr-1 h-3.5 w-3.5" /> Download
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 {/* 4 Statistics Cards */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-[#F5E2DA]">

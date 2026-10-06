@@ -4,6 +4,7 @@ import {
   Upload,
   FileText,
   Download,
+  Eye,
   Search,
   X,
   Filter,
@@ -30,12 +31,14 @@ import {
 } from "@/components/ui/Select";
 import UploadDocumentModal from "@/components/forms/UploadDocumentModal";
 import RenameDocumentModal from "@/components/forms/RenameDocumentModal";
+import DocumentPreviewModal from "@/components/forms/DocumentPreviewModal";
 import { triggerDownload } from "@/lib/utils";
 import { formatFileSize } from "@/components/ui/FileDropzone";
 import {
   getDocumentsApi,
   getTrainerFiltersApi,
   deleteDocumentApi,
+  downloadDocumentFileApi,
   type BackendDocumentItem,
   type BatchFilterItem,
   type CourseFilterItem,
@@ -108,6 +111,7 @@ export default function Documents() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingDocument, setEditingDocument] = useState<BackendDocumentItem | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<BackendDocumentItem | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const isFirstMountRef = useRef(true);
@@ -287,7 +291,26 @@ export default function Documents() {
     }
   }, [loadingRef, fetchDocuments]);
 
-  function handleDownload(d: BackendDocumentItem) {
+  function handleView(d: BackendDocumentItem) {
+    if (d.fileUrl) {
+      setPreviewDocument(d);
+    } else {
+      toast.error("No file URL available for this document.");
+    }
+  }
+
+  async function handleDownload(d: BackendDocumentItem) {
+    if (d.id) {
+      try {
+        const blob = await downloadDocumentFileApi(d.id, false);
+        const url = URL.createObjectURL(blob);
+        triggerDownload(url, d.title);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return;
+      } catch (err) {
+        console.warn("Direct API download fallback to URL:", err);
+      }
+    }
     if (d.fileUrl) {
       triggerDownload(d.fileUrl, d.title);
     }
@@ -378,33 +401,46 @@ export default function Documents() {
   return (
     <div className="w-full min-w-0 max-w-full space-y-6">
       {/* ─────────────────────────────────────────────────────────────────────────
-          HEADER & FILTER TOOLBAR (IN ONE LINE)
+          HEADER & PRIMARY ACTION (UPLOAD DOCUMENT)
           ───────────────────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4">
-        {/* Header Title Row */}
-        <div>
-          <div className="flex items-center gap-2">
-            {selectedModuleId && (
-              <Link
-                to={`/content/modules${
-                  selectedCourseId && selectedCourseId !== "all" && selectedCourseId !== "none"
-                    ? `?courseId=${selectedCourseId}`
-                    : ""
-                }${selectedBatchId && selectedBatchId !== "all" ? `&batchId=${selectedBatchId}` : ""}`}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-[#DE896A] hover:underline mr-1"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" /> Back to Modules
-              </Link>
-            )}
-            <h1 className="text-2xl font-bold tracking-tight text-[#3A2A22]">Materials</h1>
+        {/* Header Title Row with Primary Action Button */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              {selectedModuleId && (
+                <Link
+                  to={`/content/modules${
+                    selectedCourseId && selectedCourseId !== "all" && selectedCourseId !== "none"
+                      ? `?courseId=${selectedCourseId}`
+                      : ""
+                  }${selectedBatchId && selectedBatchId !== "all" ? `&batchId=${selectedBatchId}` : ""}`}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#DE896A] hover:underline mr-1"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Back to Modules
+                </Link>
+              )}
+              <h1 className="text-2xl font-bold tracking-tight text-[#3A2A22]">Materials</h1>
+            </div>
+            <p className="mt-1 text-sm text-[#8C7A70]">
+              Reference material, presentations, and study guides attached to your curriculum.
+            </p>
           </div>
-          <p className="mt-1 text-sm text-[#8C7A70]">
-            Reference material, presentations, and study guides attached to your curriculum.
-          </p>
+
+          {/* Prominent Page Header Action: Upload Document */}
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              id="upload-document-header-btn"
+              onClick={() => setModalOpen(true)}
+              className="h-10 rounded-xl shadow-xs px-4 font-semibold cursor-pointer"
+            >
+              <Upload className="mr-1.5 h-4 w-4" /> Upload Document
+            </Button>
+          </div>
         </div>
 
-        {/* Single-Line Action Toolbar: Search + Batches + Courses + Clear + Upload */}
-        <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 w-full">
+        {/* Filter Toolbar: Search + Batches + Courses + Clear */}
+        <div className="flex flex-wrap items-center gap-3 w-full">
           {/* Search Materials Input */}
           <div className="relative flex-1 min-w-[180px] max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#C7B6AC]" />
@@ -469,7 +505,7 @@ export default function Documents() {
             </Select>
           </div>
 
-          {/* Clear Filters Button (resets search and pagination, preserves module/course scope) */}
+          {/* Clear Filters Button */}
           {(searchQuery.trim() || page > 1) && (
             <Button
               variant="outline"
@@ -481,11 +517,6 @@ export default function Documents() {
               Clear
             </Button>
           )}
-
-          {/* Upload Material Button */}
-          <Button onClick={() => setModalOpen(true)} className="h-10 rounded-xl shadow-xs shrink-0 sm:ml-auto">
-            <Upload className="mr-1.5 h-4 w-4" /> Upload Material
-          </Button>
         </div>
       </div>
 
@@ -500,7 +531,7 @@ export default function Documents() {
             </span>
             {selectedBatch && (
               <span className="inline-flex items-center gap-1 rounded-lg bg-white border border-[#F5E2DA] px-2.5 py-1 font-semibold text-[#233047]">
-                <Users className="h-3 w-3 text-[#DE896A]" /> Batch: {cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}
+                <Users className="h-3 w-3 text-[#DE896A]" /> Batch: {cleanDisplayString(selectedBatch.batchName || selectedBatch.name || "Batch")}
               </span>
             )}
             {contextCourseName && (
@@ -579,9 +610,26 @@ export default function Documents() {
               ) : documents.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-5 py-12 text-center text-sm text-[#B7A79D]">
-                    {searchQuery.trim()
-                      ? `No materials found matching "${searchQuery}".`
-                      : "No materials uploaded for this selection yet."}
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#FBECE7] text-[#DE896A] mb-3">
+                      <FileText className="h-6 w-6" />
+                    </div>
+                    <p className="font-semibold text-sm text-[#3A2A22]">
+                      {searchQuery.trim()
+                        ? `No materials found matching "${searchQuery}".`
+                        : "No materials uploaded for this selection yet."}
+                    </p>
+                    <p className="text-xs text-[#8C7A70] mt-1 max-w-sm mx-auto">
+                      Upload PDFs, Excel spreadsheets, or Word documents for your trainees.
+                    </p>
+                    <div className="mt-4 flex justify-center">
+                      <Button
+                        size="sm"
+                        onClick={() => setModalOpen(true)}
+                        className="rounded-xl shadow-xs cursor-pointer font-semibold"
+                      >
+                        <Upload className="mr-1.5 h-3.5 w-3.5" /> Upload Document
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -648,15 +696,26 @@ export default function Documents() {
                       <td className="px-5 py-4">
                         <div className="flex items-center justify-end gap-1.5">
                           {d.fileUrl ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleDownload(d)}
-                              className="h-8 rounded-lg border-[#F0DED4] bg-white px-2.5 text-xs text-[#DE896A] hover:bg-[#FBECE7] hover:text-[#C26D4D]"
-                            >
-                              <Download className="mr-1 h-3.5 w-3.5" />
-                              Download
-                            </Button>
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleView(d)}
+                                className="h-8 rounded-lg border-[#F0DED4] bg-white px-2.5 text-xs text-[#DE896A] hover:bg-[#FBECE7] hover:text-[#C26D4D]"
+                              >
+                                <Eye className="mr-1 h-3.5 w-3.5" />
+                                View
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleDownload(d)}
+                                className="h-8 rounded-lg border-[#F0DED4] bg-white px-2.5 text-xs text-[#DE896A] hover:bg-[#FBECE7] hover:text-[#C26D4D]"
+                              >
+                                <Download className="mr-1 h-3.5 w-3.5" />
+                                Download
+                              </Button>
+                            </>
                           ) : (
                             <span className="text-xs text-[#C7B6AC]">No File</span>
                           )}
@@ -727,6 +786,13 @@ export default function Documents() {
         onOpenChange={(open) => !open && setEditingDocument(null)}
         document={editingDocument}
         onSuccess={fetchDocuments}
+      />
+
+      <DocumentPreviewModal
+        open={Boolean(previewDocument)}
+        onOpenChange={(open) => !open && setPreviewDocument(null)}
+        document={previewDocument}
+        onDownload={handleDownload}
       />
     </div>
   );

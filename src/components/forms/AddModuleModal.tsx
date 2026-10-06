@@ -82,9 +82,9 @@ export default function AddModuleModal({
         if (isMounted) {
           const list: BackendBatchItem[] = (data?.batches || []).map((b) => ({
             id: b.id,
-            batchName: b.name,
+            batchName: b.batchName || b.name || "Batch",
             courseId: b.courseId,
-            course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name } : null,
+            course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name || "Course" } : null,
           }));
           setBatches(list);
           const initialBatchId = defaultBatchId || list[0]?.id || "";

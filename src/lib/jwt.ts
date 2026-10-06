@@ -57,11 +57,13 @@ export function extractUserFromToken(user?: BackendUser | null, token?: string |
     return fallback;
   }
 
+  const { roleId: _fallbackRoleId, ...cleanFallback } = (fallback as any);
+  const { roleId: _tokenRoleId, ...cleanTokenUser } = (tokenUser as any);
+
   return {
-    ...tokenUser,
-    ...fallback,
-    role: fallback.role || tokenUser.role,
-    roleId: fallback.roleId || tokenUser.roleId,
+    ...cleanTokenUser,
+    ...cleanFallback,
+    role: (fallback.role || tokenUser.role || "TRAINER").toUpperCase(),
     permissions: fallback.permissions || tokenUser.permissions,
   } as BackendUser;
 }

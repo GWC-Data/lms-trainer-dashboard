@@ -385,7 +385,7 @@ export default function Modules() {
                 <SelectItem value="all">All Batches</SelectItem>
                 {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.name || (b as any).batchName)}
+                    {cleanDisplayString(b.batchName || b.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -408,7 +408,7 @@ export default function Modules() {
                 <SelectItem value="all">All Courses</SelectItem>
                 {courses.map((c) => (
                   <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
-                    {cleanDisplayString(c.name || (c as any).courseName)}
+                    {cleanDisplayString(c.courseName || c.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -449,7 +449,7 @@ export default function Modules() {
               {selectedBatch && (
                 <Badge tone="neutral">
                   <Users className="mr-1 h-3 w-3" />
-                  BATCH: {cleanDisplayString(selectedBatch.name || (selectedBatch as any).batchName)}
+                  BATCH: {cleanDisplayString(selectedBatch.batchName || selectedBatch.name)}
                 </Badge>
               )}
 
@@ -457,7 +457,7 @@ export default function Modules() {
                 <Badge tone="neutral">COURSE: {cleanDisplayString(batchResolvedCourseName)}</Badge>
               ) : selectedCourse ? (
                 <Badge tone="neutral">
-                  COURSE: {cleanDisplayString(selectedCourse.name || (selectedCourse as any).courseName)}
+                  COURSE: {cleanDisplayString(selectedCourse.courseName || selectedCourse.name)}
                 </Badge>
               ) : selectedBatch ? (
                 <Badge tone="red">NO COURSE ASSIGNED</Badge>
@@ -554,7 +554,7 @@ export default function Modules() {
           ) : (
             modules.map((m, idx) => {
               const deliveryMode = m.deliveryMode || "online";
-              const moduleTitle = m.title || m.moduleName || `Module ${idx + 1}`;
+              const moduleTitle = m.moduleName || m.title || `Module ${idx + 1}`;
 
               return (
                 <div
@@ -597,12 +597,20 @@ export default function Modules() {
                   </div>
 
                   <div className="flex shrink-0 items-center gap-3">
-                    <Badge
-                      tone={deliveryMode === "online" ? "blue" : "neutral"}
-                      className="capitalize text-xs font-semibold"
-                    >
-                      {deliveryMode}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {((m.deliveryMode || "online").toLowerCase().trim() === "both"
+                        ? ["online", "offline"]
+                        : [(m.deliveryMode || "online").toLowerCase().trim()]
+                      ).map((dm) => (
+                        <Badge
+                          key={dm}
+                          tone={dm === "online" ? "blue" : "neutral"}
+                          className="capitalize text-xs font-semibold"
+                        >
+                          {dm}
+                        </Badge>
+                      ))}
+                    </div>
                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#FAF6F3] text-[#8C7A70] group-hover:bg-[#DE896A] group-hover:text-white transition-all">
                       <ChevronRight className="h-4 w-4" />
                     </div>
