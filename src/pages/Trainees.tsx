@@ -599,7 +599,7 @@ export default function Trainees() {
                   <SelectItem value={ALL}>All Courses</SelectItem>
                   {courses.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {cleanDisplayString(c.name)}
+                      {cleanDisplayString(c.courseName || c.name)}
                     </SelectItem>
                   ))}
                 </>
@@ -607,7 +607,7 @@ export default function Trainees() {
                 (() => {
                   const matchedCourse = courses.find((c) => c.id === courseFilter);
                   const b = batches.find((item) => item.id === batchFilter);
-                  const cName = matchedCourse?.name || (b?.courseId ? courses.find((c) => c.id === b.courseId)?.name : null);
+                  const cName = matchedCourse?.courseName || matchedCourse?.name || (b?.courseId ? (courses.find((c) => c.id === b.courseId)?.courseName || courses.find((c) => c.id === b.courseId)?.name) : null);
                   return cName ? (
                     <SelectItem value={courseFilter}>{cleanDisplayString(cName)} 🔒</SelectItem>
                   ) : (
@@ -748,15 +748,24 @@ export default function Trainees() {
                           {isPreStart ? (
                             <span className="text-xs font-medium text-[#B7A79D]">Not started</span>
                           ) : (
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <ProgressBar value={t.progressPct} className="w-20" />
-                                <span className="text-xs font-medium text-[#8C7A70]">{t.progressPct}%</span>
-                              </div>
-                              <span className="text-[10px] text-[#A8988F] block mt-0.5">
-                                {t.completedModules ?? 0}/{t.totalModules ?? 0} modules completed
-                              </span>
-                            </div>
+                            (() => {
+                              const totalMods = Number(t.totalModules ?? t.moduleCompletion?.total ?? 0);
+                              const compMods = Number(t.completedModules ?? t.moduleCompletion?.completed ?? 0);
+                              const modulePct = totalMods > 0
+                                ? (t.moduleCompletion?.percentage ?? Math.round((compMods / totalMods) * 100))
+                                : 0;
+                              return (
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <ProgressBar value={modulePct} className="w-20" />
+                                    <span className="text-xs font-medium text-[#8C7A70]">{modulePct}%</span>
+                                  </div>
+                                  <span className="text-[10px] text-[#A8988F] block mt-0.5">
+                                    {compMods}/{totalMods} modules completed
+                                  </span>
+                                </div>
+                              );
+                            })()
                           )}
                         </td>
                         <td className="px-4 sm:px-5 py-3">

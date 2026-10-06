@@ -244,7 +244,7 @@ export default function Batches() {
                 <SelectItem value="all">All Courses ({courses.length})</SelectItem>
                 {courses.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {c.name}
+                    {c.courseName || c.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -357,7 +357,9 @@ export default function Batches() {
 
             const courseName = resolvedCourse?.courseName || null;
             const courseDesc = resolvedCourse?.courseDesc || null;
-            const isOnline = (b.deliveryMode || "online").toLowerCase() === "online";
+            const rawDeliveryMode = (b.deliveryMode || "online").toLowerCase().trim();
+            const deliveryModes = rawDeliveryMode === "both" ? ["online", "offline"] : [rawDeliveryMode];
+            const hasOffline = deliveryModes.includes("offline");
             const traineeCount =
               typeof b.traineeCount === "number"
                 ? b.traineeCount
@@ -384,17 +386,22 @@ export default function Batches() {
                         </span>
                       </div>
                     </div>
-                    <Badge
-                      tone={isOnline ? "blue" : "amber"}
-                      className="shrink-0 scale-95 origin-top-right"
-                    >
-                      {isOnline ? (
-                        <Laptop className="h-3 w-3 mr-1" />
-                      ) : (
-                        <MapPin className="h-3 w-3 mr-1" />
-                      )}
-                      {isOnline ? "Online" : "Offline"}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1 shrink-0 scale-95 origin-top-right">
+                      {deliveryModes.map((dm) => (
+                        <Badge
+                          key={dm}
+                          tone={dm === "online" ? "blue" : "amber"}
+                          className="shrink-0"
+                        >
+                          {dm === "online" ? (
+                            <Laptop className="h-3 w-3 mr-1" />
+                          ) : (
+                            <MapPin className="h-3 w-3 mr-1" />
+                          )}
+                          {dm === "online" ? "Online" : "Offline"}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Trainees Count */}
@@ -455,7 +462,7 @@ export default function Batches() {
                     >
                       <Users className="h-3.5 w-3.5" /> Trainees
                     </Link>
-                    {!isOnline && (
+                    {hasOffline && (
                       <Link
                         to="/attendance"
                         state={{ batchId: b.id }}

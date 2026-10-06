@@ -3,6 +3,7 @@ import { getOrCreateDeviceId } from "@/lib/deviceId";
 import { extractUserFromToken } from "@/lib/jwt";
 import { store } from "@/store/store";
 import { restoreSessionThunk } from "@/store/authSlice";
+import { cleanDisplayString } from "@/lib/utils";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
@@ -492,7 +493,29 @@ export interface TrainerDashboardResponse {
  * Scoped strictly to authenticated trainer. Returns KPIs and previews only.
  */
 export async function getTrainerDashboardApi(): Promise<TrainerDashboardResponse> {
-  return deduplicatedGet<TrainerDashboardResponse>("/api/trainer/dashboard");
+  const res = await deduplicatedGet<TrainerDashboardResponse>("/api/trainer/dashboard");
+  if (res?.data) {
+    if (Array.isArray(res.data.courses)) {
+      res.data.courses = res.data.courses.map((c) => ({
+        ...c,
+        name: cleanDisplayString(c.name),
+      }));
+    }
+    if (Array.isArray(res.data.upcomingSchedule)) {
+      res.data.upcomingSchedule = res.data.upcomingSchedule.map((s) => ({
+        ...s,
+        batchName: cleanDisplayString(s.batchName || s.batch || "Batch"),
+      }));
+    }
+    if (Array.isArray(res.data.traineesNeedingSupport)) {
+      res.data.traineesNeedingSupport = res.data.traineesNeedingSupport.map((t) => ({
+        ...t,
+        batchName: cleanDisplayString(t.batchName),
+        courseName: cleanDisplayString(t.courseName),
+      }));
+    }
+  }
+  return res;
 }
 
 /**
@@ -570,16 +593,16 @@ export interface PaginationMetadata {
 
 export interface CourseFilterItem {
   id: string;
-  name: string;
-  courseId?: string;
   courseName?: string;
+  name?: string;
+  courseId?: string;
 }
 
 export interface BatchFilterItem {
   id: string;
-  name: string;
-  batchId?: string;
   batchName?: string;
+  name?: string;
+  batchId?: string;
   courseId?: string | null;
   courseName?: string | null;
   startDate?: string | null;
@@ -633,7 +656,23 @@ export async function getTrainerFiltersApi(forceRefresh = false): Promise<Traine
 
   trainerFiltersInFlight = deduplicatedGet<TrainerFiltersResponse>("/api/trainer/filters")
     .then((res) => {
-      const data = res?.data || { courses: [], batches: [] };
+      const rawData = res?.data || { courses: [], batches: [] };
+      const normalizedCourses: CourseFilterItem[] = (rawData.courses || []).map((c: any) => ({
+        id: c.id,
+        courseName: cleanDisplayString(c.courseName || c.name),
+        name: cleanDisplayString(c.name || c.courseName),
+        courseId: c.id,
+      }));
+      const normalizedBatches: BatchFilterItem[] = (rawData.batches || []).map((b: any) => ({
+        id: b.id,
+        batchName: cleanDisplayString(b.batchName || b.name),
+        name: cleanDisplayString(b.name || b.batchName),
+        batchId: b.id,
+        courseId: b.courseId || null,
+        courseName: b.courseName ? cleanDisplayString(b.courseName) : null,
+        startDate: b.startDate || null,
+      }));
+      const data: TrainerFiltersData = { courses: normalizedCourses, batches: normalizedBatches };
       cachedTrainerFilters = data;
       trainerFiltersInFlight = null;
       return data;
@@ -678,7 +717,12 @@ export async function getTrainerCoursesApi(params?: {
   const res = await deduplicatedGet<TrainerCoursesResponse>("/api/trainer/courses", {
     params: params ?? undefined
   });
-  const list = res?.data || (res as any)?.courses || [];
+  const rawList = res?.data || (res as any)?.courses || [];
+  const list = rawList.map((c: any) => ({
+    ...c,
+    name: cleanDisplayString(c.name || c.courseName),
+    courseName: cleanDisplayString(c.courseName || c.name),
+  }));
   return {
     ...res,
     data: list,
@@ -749,6 +793,14 @@ export async function getModulesApi(
   const response = await api.get<ModulesResponse>("/modules", {
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
+  if (response.data && Array.isArray(response.data.modules)) {
+    response.data.modules = response.data.modules.map((m: any) => ({
+      ...m,
+      courseName: cleanDisplayString(m.courseName),
+      moduleName: cleanDisplayString(m.moduleName || m.title),
+      title: cleanDisplayString(m.title || m.moduleName),
+    }));
+  }
   return response.data;
 }
 
@@ -932,8 +984,18 @@ export async function getTrainerBatchesApi(
   const response = await deduplicatedGet<any>("/api/trainer/batches", {
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
-  const list = response?.data || response?.batch?.data || [];
-  return list;
+  const rawList = response?.data || response?.batch?.data || [];
+  return rawList.map((b: any) => ({
+    ...b,
+    batchName: cleanDisplayString(b.batchName || b.name),
+    name: cleanDisplayString(b.name || b.batchName),
+    course: b.course
+      ? {
+          ...b.course,
+          courseName: cleanDisplayString(b.course.courseName || b.course.name),
+        }
+      : null,
+  }));
 }
 
 export async function getTrainerBatchesPaginatedApi(params?: {
@@ -943,9 +1005,23 @@ export async function getTrainerBatchesPaginatedApi(params?: {
   limit?: number;
   search?: string;
 }): Promise<TrainerBatchesResponse> {
-  return deduplicatedGet<TrainerBatchesResponse>("/api/trainer/batches", {
+  const res = await deduplicatedGet<TrainerBatchesResponse>("/api/trainer/batches", {
     params: params ?? undefined
   });
+  if (res?.data && Array.isArray(res.data)) {
+    res.data = res.data.map((b: any) => ({
+      ...b,
+      batchName: cleanDisplayString(b.batchName || b.name),
+      name: cleanDisplayString(b.name || b.batchName),
+      course: b.course
+        ? {
+            ...b.course,
+            courseName: cleanDisplayString(b.course.courseName || b.course.name),
+          }
+        : null,
+    }));
+  }
+  return res;
 }
 
 
@@ -1016,6 +1092,15 @@ export async function getDocumentsApi(params?: {
   const response = await api.get<DocumentsResponse>("/api/documents", {
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
+  if (response.data && Array.isArray(response.data.documents)) {
+    response.data.documents = response.data.documents.map((d: any) => ({
+      ...d,
+      courseName: cleanDisplayString(d.courseName),
+      batchName: cleanDisplayString(d.batchName),
+      moduleName: cleanDisplayString(d.moduleName),
+      lessonTitle: cleanDisplayString(d.lessonTitle),
+    }));
+  }
   return response.data;
 }
 
@@ -1136,7 +1221,13 @@ export async function getTrainerQuizzesApi(
     params: Object.keys(cleanParams).length > 0 ? cleanParams : undefined
   });
 
-  const quizzes = response.data?.data || response.data?.quizzes || [];
+  const rawQuizzes = response.data?.data || response.data?.quizzes || [];
+  const quizzes = rawQuizzes.map((q: any) => ({
+    ...q,
+    courseName: cleanDisplayString(q.courseName),
+    batchName: cleanDisplayString(q.batchName),
+    moduleName: cleanDisplayString(q.moduleName),
+  }));
   const pagination = response.data?.pagination;
   const total = pagination?.total ?? quizzes.length;
 
@@ -1262,6 +1353,10 @@ export interface AssignmentItem {
   trainerId: string;
   trainerName?: string;
   dueDate: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  attachmentType?: string;
+  attachmentSize?: number;
   submissions?: number;
   submissionCount?: number;
   pendingReview?: number;
@@ -1310,6 +1405,7 @@ export interface CreateAssignmentPayload {
   courseId: string;
   batchId: string;
   dueDate: string;
+  file?: File | null;
 }
 
 export interface CreateAssignmentResponse {
@@ -1374,6 +1470,13 @@ export async function getAssignmentsApi(params?: {
   const data = await deduplicatedGet<AssignmentsResponse>("/api/assignments", {
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
+  if (data && Array.isArray(data.assignments)) {
+    data.assignments = data.assignments.map((a: any) => ({
+      ...a,
+      courseName: cleanDisplayString(a.courseName),
+      batchName: cleanDisplayString(a.batchName),
+    }));
+  }
   return data || { success: true, assignments: [] };
 }
 
@@ -1381,8 +1484,13 @@ export async function getAssignmentsApi(params?: {
 /**
  * Real Create Assignment API: POST /assignments (or /api/assignments)
  */
-export async function createAssignmentApi(payload: CreateAssignmentPayload): Promise<CreateAssignmentResponse> {
-  const response = await api.post<CreateAssignmentResponse>("/api/assignments", payload);
+export async function createAssignmentApi(payload: CreateAssignmentPayload | FormData): Promise<CreateAssignmentResponse> {
+  const isFormData = typeof FormData !== "undefined" && payload instanceof FormData;
+  const response = await api.post<CreateAssignmentResponse>(
+    "/api/assignments",
+    payload,
+    isFormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined
+  );
   return response.data;
 }
 
@@ -1497,10 +1605,10 @@ export async function getTraineesApi(params?: {
   const rawList = resData?.data?.trainees || resData?.data || resData?.trainees || [];
   const normalizedList: TraineeListItem[] = rawList.map((t: any) => {
     const fullName = t.name || t.fullName || (t.firstName || t.lastName ? `${t.firstName || ''} ${t.lastName || ''}`.trim() : 'Trainee');
-    const bId = t.batchId || t.batch?.batchId || '';
-    const bName = t.batchName || t.batch?.batchName || '';
-    const cId = t.courseId || t.course?.courseId || '';
-    const cName = t.courseName || t.course?.courseName || '';
+    const bId = t.batchId || t.batch?.id || t.batch?.batchId || '';
+    const bName = cleanDisplayString(t.batchName || t.batch?.name || t.batch?.batchName || '');
+    const cId = t.courseId || t.course?.id || t.course?.courseId || '';
+    const cName = cleanDisplayString(t.courseName || t.course?.name || t.course?.courseName || '');
     const progressPct = Number(t.progressPct ?? t.moduleCompletion?.percentage ?? t.lessonCompletion?.percentage ?? 0);
     const totalModules = Number(t.totalModules ?? t.moduleCompletion?.total ?? 0);
     const completedModules = Number(
@@ -1508,10 +1616,15 @@ export async function getTraineesApi(params?: {
       t.moduleCompletion?.completed ??
       (totalModules > 0 ? Math.round((progressPct / 100) * totalModules) : 0)
     );
+    const moduleCompletionPct = totalModules > 0
+      ? (typeof t.moduleCompletion?.percentage === "number"
+          ? t.moduleCompletion.percentage
+          : Math.round((completedModules / totalModules) * 100))
+      : 0;
 
     return {
       id: t.id || t.traineeId || '',
-      name: fullName,
+      name: cleanDisplayString(fullName),
       email: t.email || '',
       batchId: bId,
       batchName: bName,
@@ -1521,10 +1634,10 @@ export async function getTraineesApi(params?: {
       progressPct,
       completedModules,
       totalModules,
-      moduleCompletion: t.moduleCompletion || {
+      moduleCompletion: {
         completed: completedModules,
         total: totalModules,
-        percentage: progressPct
+        percentage: moduleCompletionPct
       },
       completedLessons: Number(t.completedLessons ?? t.lessonCompletion?.completed ?? completedModules),
       totalLessons: Number(t.totalLessons ?? t.lessonCompletion?.total ?? totalModules),
@@ -1536,8 +1649,7 @@ export async function getTraineesApi(params?: {
         total: Number(t.attendance?.total ?? 0),
       },
       isAtRisk: Boolean(t.isAtRisk ?? t.status === 'AT_RISK'),
-      atRiskReason: t.atRiskReason ?? null,
-      ...t
+      atRiskReason: t.atRiskReason ?? null
     };
   });
 
@@ -1600,9 +1712,24 @@ export interface TraineeDetailData {
 }
 
 export async function getTraineeDetailsApi(traineeId: string, batchId?: string): Promise<{ success: boolean; data?: TraineeDetailData }> {
-  return deduplicatedGet<{ success: boolean; data?: TraineeDetailData }>(`/api/trainer/trainees/${traineeId}`, {
+  const res = await deduplicatedGet<{ success: boolean; data?: TraineeDetailData }>(`/api/trainer/trainees/${traineeId}`, {
     params: batchId ? { batchId } : undefined
   });
+  if (res?.data) {
+    const rawCourseName = res.data.course?.name || (res.data as any)?.courseName || (res.data as any)?.course?.courseName || '';
+    const rawBatchName = res.data.batch?.name || (res.data as any)?.batchName || (res.data as any)?.batch?.batchName || '';
+    res.data.course = {
+      id: res.data.course?.id || (res.data as any)?.courseId || '',
+      name: cleanDisplayString(rawCourseName) || 'Course',
+    };
+    res.data.batch = {
+      id: res.data.batch?.id || (res.data as any)?.batchId || '',
+      name: cleanDisplayString(rawBatchName) || 'Batch',
+    };
+    res.data.courseName = cleanDisplayString(rawCourseName);
+    res.data.batchName = cleanDisplayString(rawBatchName);
+  }
+  return res;
 }
 
 /**
@@ -1618,6 +1745,13 @@ export async function getTrainerScheduleApi(params?: {
   const response = await deduplicatedGet<any>("/api/trainer/schedule", {
     params: params ?? undefined
   });
+  if (Array.isArray(response)) {
+    return response.map((s: any) => ({
+      ...s,
+      batchName: cleanDisplayString(s.batchName || s.batch || "Batch"),
+      courseName: cleanDisplayString(s.courseName || s.course || ""),
+    }));
+  }
   return response;
 }
 
@@ -1672,7 +1806,7 @@ export interface TrainerAttendanceItem {
   traineeId: string;
   traineeName: string;
   email?: string | null;
-  batchId: string;
+  batchId?: string;
   batchName: string;
   courseName: string;
   date: string;
@@ -1698,7 +1832,13 @@ export async function getTrainerAttendanceApi(params?: {
   const res = await deduplicatedGet<any>("/api/trainer/attendance", {
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined
   });
-  return res?.data || [];
+  const rawData = res?.data || [];
+  return rawData.map((item: any) => ({
+    ...item,
+    traineeName: cleanDisplayString(item.traineeName || "Trainee"),
+    batchName: cleanDisplayString(item.batchName || "Batch"),
+    courseName: cleanDisplayString(item.courseName || "General Course"),
+  }));
 }
 
 export * from "./batchEventApi";

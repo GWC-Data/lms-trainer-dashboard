@@ -20,7 +20,7 @@ export default function Videos() {
         if (!isMounted || !Array.isArray(courses)) return;
         const map: Record<string, string> = {};
         courses.forEach((c) => {
-          if (c.id) map[c.id] = c.name;
+          if (c.id) map[c.id] = c.courseName || c.name || "Course";
         });
         setCourseMap(map);
       })

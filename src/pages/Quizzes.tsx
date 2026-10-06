@@ -370,7 +370,7 @@ export default function Quizzes() {
                 <SelectItem value="all">All Batches</SelectItem>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.name || b.batchName)}
+                    {cleanDisplayString(b.batchName || b.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -391,7 +391,7 @@ export default function Quizzes() {
                 <SelectItem value="all">All Courses</SelectItem>
                 {courses.map((c) => (
                   <SelectItem key={c.id || c.courseId} value={c.id || c.courseId || ""}>
-                    {cleanDisplayString(c.name || c.courseName)}
+                    {cleanDisplayString(c.courseName || c.name)}
                   </SelectItem>
                 ))}
               </SelectContent>

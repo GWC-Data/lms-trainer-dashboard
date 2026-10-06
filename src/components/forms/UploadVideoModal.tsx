@@ -14,6 +14,7 @@ import {
 import FileDropzone, { formatFileSize } from "@/components/ui/FileDropzone";
 import { getTrainerFiltersApi, CourseFilterItem } from "@/services/api";
 import { useContent } from "@/context/ContentContext";
+import { cleanDisplayString } from "@/lib/utils";
 
 interface UploadVideoModalProps {
   open: boolean;
@@ -158,7 +159,7 @@ export default function UploadVideoModal({ open, onOpenChange, defaultCourseId }
               <SelectContent>
                 {courses.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {c.name}
+                    {cleanDisplayString(c.courseName || c.name)}
                   </SelectItem>
                 ))}
               </SelectContent>

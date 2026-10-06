@@ -224,7 +224,7 @@ export default function UploadDocumentModal({
     if (matched) {
       const courseOpt: CourseOption = {
         id: matched.id || (matched as any).courseId,
-        name: matched.name || (matched as any).courseName,
+        name: matched.courseName || matched.name || "Course",
       };
       setCourses([courseOpt]);
       setValue("courseId", courseOpt.id);
@@ -416,7 +416,7 @@ export default function UploadDocumentModal({
               <SelectContent>
                 {batches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.name || (b as any).batchName)}
+                    {cleanDisplayString(b.batchName || b.name)}
                   </SelectItem>
                 ))}
               </SelectContent>

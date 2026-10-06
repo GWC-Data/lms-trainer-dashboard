@@ -163,9 +163,9 @@ export default function QuizFormModal({ open, onOpenChange, quiz, onSuccess }: Q
         if (cancelled) return;
         const batchList: BackendBatchItem[] = (data?.batches || []).map((b) => ({
           id: b.id,
-          batchName: b.name,
+          batchName: b.batchName || b.name || "Batch",
           courseId: b.courseId,
-          course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name } : null,
+          course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name || "Course" } : null,
         }));
         const courseList: TrainerFilterCourseItem[] = data?.courses || [];
 

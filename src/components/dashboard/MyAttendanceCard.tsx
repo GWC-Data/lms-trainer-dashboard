@@ -1,5 +1,4 @@
-import { Link } from "react-router-dom";
-import { UserCheck, ArrowRight, CalendarClock } from "lucide-react";
+import { UserCheck, CalendarClock } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
@@ -111,17 +110,6 @@ export default function MyAttendanceCard({ summary, className }: MyAttendanceCar
             </p>
           </div>
         )}
-      </div>
-
-      {/* Action to /attendance */}
-      <div className="mt-3 pt-2.5 border-t border-[#F5E2DA]/60 mt-auto">
-        <Link
-          to="/attendance"
-          className="flex items-center justify-between text-xs font-semibold text-[#DE896A] hover:text-[#C26D4D] transition-colors group cursor-pointer"
-        >
-          <span>View Attendance</span>
-          <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
-        </Link>
       </div>
     </Card>
   );

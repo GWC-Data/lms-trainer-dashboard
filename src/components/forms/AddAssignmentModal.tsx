@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/Select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/Popover";
 import { Calendar } from "@/components/ui/Calendar";
-import { Calendar as CalendarIcon } from "lucide-react";
+import { Calendar as CalendarIcon, Upload, FileText, X, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   getTrainerFiltersApi,
@@ -55,6 +55,17 @@ function cleanDisplayString(str?: string | null): string {
     .replace(/\s*-\s*[0-9a-fA-F-]{36}/gi, "")
     .replace(/^cid-[a-zA-Z0-9_-]+\s*/gi, "")
     .trim();
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatFileExtension(fileName: string): string {
+  const ext = fileName.split(".").pop()?.toUpperCase();
+  return ext || "FILE";
 }
 
 function getTodayDateString(): string {
@@ -120,6 +131,8 @@ export default function AddAssignmentModal({
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const {
     register,
@@ -169,9 +182,9 @@ export default function AddAssignmentModal({
         if (cancelled) return;
         const batchList: BackendBatchItem[] = (data?.batches || []).map((b) => ({
           id: b.id,
-          batchName: b.name,
+          batchName: b.batchName || b.name || "Batch",
           courseId: b.courseId,
-          course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name } : null,
+          course: b.courseId ? { id: b.courseId, courseName: b.courseName || b.name || "Course" } : null,
         }));
         const courseList: TrainerFilterCourseItem[] = data?.courses || [];
 
@@ -191,6 +204,8 @@ export default function AddAssignmentModal({
           courseId: "",
           dueDate: "",
         });
+        setSelectedFile(null);
+        setFileError(null);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -246,6 +261,40 @@ export default function AddAssignmentModal({
     }
   }, [open, batchId, batches, allCourses, setValue]);
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setFileError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size === 0) {
+      setFileError("Invalid or empty file.");
+      e.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setFileError("File size must be 5 MB or less.");
+      e.target.value = "";
+      return;
+    }
+
+    const ext = `.${file.name.split(".").pop()?.toLowerCase()}`;
+    const allowed = [".pdf", ".doc", ".docx", ".xls", ".xlsx"];
+    if (!allowed.includes(ext)) {
+      setFileError("Unsupported file type. Allowed formats: PDF, Word (.doc, .docx), Excel (.xls, .xlsx).");
+      e.target.value = "";
+      return;
+    }
+
+    setSelectedFile(file);
+    e.target.value = "";
+  }
+
+  function handleRemoveFile() {
+    setSelectedFile(null);
+    setFileError(null);
+  }
+
   async function onSubmit(values: FormValues) {
     setSubmitError(null);
 
@@ -273,16 +322,22 @@ export default function AddAssignmentModal({
 
     try {
       setSubmitting(true);
-      const res = await createAssignmentApi({
-        title: values.title.trim(),
-        batchId: values.batchId.trim(),
-        courseId: values.courseId.trim(),
-        dueDate: values.dueDate,
-      });
+      const formData = new FormData();
+      formData.append("title", values.title.trim());
+      formData.append("batchId", values.batchId.trim());
+      formData.append("courseId", values.courseId.trim());
+      formData.append("dueDate", values.dueDate);
+      if (selectedFile) {
+        formData.append("file", selectedFile);
+      }
+
+      const res = await createAssignmentApi(formData);
 
       if (res.success) {
         toast.success(`Assignment "${values.title}" created successfully`);
         reset();
+        setSelectedFile(null);
+        setFileError(null);
         onOpenChange(false);
         onSuccess?.();
       } else {
@@ -362,7 +417,73 @@ export default function AddAssignmentModal({
             </p>
           </div>
 
-          {/* 4. Due Date using shadcn Popover + Calendar */}
+          {/* 4. Attachment (Optional) */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-[#233047] block">
+                Attachment <span className="text-[#8C7A70] font-normal">(optional)</span>
+              </label>
+              <span className="text-[11px] text-[#8C7A70]">Maximum 5 MB</span>
+            </div>
+
+            {!selectedFile ? (
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="assignment-attachment-input"
+                  className="flex items-center justify-center gap-2 h-10 w-full rounded-xl border border-dashed border-[#F0DED4] bg-[#FFFDFB] px-3 text-xs font-semibold text-[#DE896A] hover:bg-[#FBECE7] hover:border-[#DE896A]/60 transition-all cursor-pointer"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span>Upload Attachment</span>
+                </label>
+                <input
+                  id="assignment-attachment-input"
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx"
+                  onChange={handleFileChange}
+                  disabled={submitting}
+                />
+                <p className="text-[11px] text-[#8C7A70]">
+                  Supported formats: PDF, DOC, DOCX, XLS, XLSX — Maximum 5 MB
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between rounded-xl border border-[#F0DED4] bg-[#FFFDFB] p-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#FBECE7] text-[#DE896A]">
+                    <FileText className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-[#233047] truncate" title={selectedFile.name}>
+                      {selectedFile.name}
+                    </p>
+                    <p className="text-[10.5px] text-[#8C7A70]">
+                      {formatFileExtension(selectedFile.name)} · {formatBytes(selectedFile.size)}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRemoveFile}
+                  disabled={submitting}
+                  className="h-7 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5 mr-1" />
+                  Remove
+                </Button>
+              </div>
+            )}
+
+            {fileError && (
+              <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3 shrink-0" /> {fileError}
+              </p>
+            )}
+          </div>
+
+          {/* 5. Due Date using shadcn Popover + Calendar */}
           <div className="space-y-1 w-full">
             <label className="text-xs font-medium text-[#6B5A52] block">
               Due date <span className="text-red-500">*</span>

@@ -328,7 +328,7 @@ export default function MyCourses() {
                 <SelectItem value="all">All Courses ({filterCourses.length})</SelectItem>
                 {filterCourses.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {cleanCourseTitle(c.name)}
+                    {cleanCourseTitle(c.courseName || c.name || "")}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -345,7 +345,7 @@ export default function MyCourses() {
                 <SelectItem value="all">All Batches ({availableBatches.length})</SelectItem>
                 {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {b.name}
+                    {b.batchName || b.name || ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -472,13 +472,8 @@ export default function MyCourses() {
                     />
                   </div>
 
-                  {/* Course Code / Subtitle Header */}
-                  <p className="text-[11px] font-bold tracking-wider text-[#DE896A] uppercase line-clamp-1">
-                    {codeTag}
-                  </p>
-
                   {/* Clean Course Title (NO raw IDs) */}
-                  <h3 className="mt-1 text-lg font-bold text-[#233047] leading-snug line-clamp-1">
+                  <h3 className="mt-2 text-lg font-bold text-[#233047] leading-snug line-clamp-1">
                     {cleanTitle}
                   </h3>
 

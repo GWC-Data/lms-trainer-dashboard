@@ -302,9 +302,18 @@ export default function Attendance() {
           else if (item.status === "absent") status = "A";
           else if (item.status === "late") status = "L";
 
+          const matchedBatch = batches.find(
+            (b) =>
+              (item as any).batchId === b.id ||
+              b.batchName === item.batchName ||
+              b.name === item.batchName
+          );
+          const internalBatchId =
+            (item as any).batchId || matchedBatch?.id || (batchId !== "all" ? batchId : undefined);
+
           return {
             traineeId: item.traineeId,
-            batchId: item.batchId,
+            batchId: internalBatchId,
             batchName: bName,
             courseName: cName,
             name: cleanDisplayString(displayName),
@@ -325,7 +334,7 @@ export default function Attendance() {
         setLoadingRoster(false);
       }
     },
-    [isToday]
+    [isToday, batches]
   );
 
   useEffect(() => {
@@ -626,7 +635,7 @@ export default function Attendance() {
                 <SelectItem value="all">All Batches</SelectItem>
                 {availableBatches.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
-                    {cleanDisplayString(b.name || (b as any).batchName)}
+                    {cleanDisplayString(b.batchName || b.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -648,7 +657,7 @@ export default function Attendance() {
                 <SelectItem value="all">All Courses</SelectItem>
                 {courses.map((c) => (
                   <SelectItem key={c.id || (c as any).courseId} value={c.id || (c as any).courseId}>
-                    {cleanDisplayString(c.name || (c as any).courseName)}
+                    {cleanDisplayString(c.courseName || c.name)}
                   </SelectItem>
                 ))}
               </SelectContent>

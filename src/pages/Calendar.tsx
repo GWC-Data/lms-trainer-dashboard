@@ -232,7 +232,7 @@ const Calendar: React.FC = () => {
           const filters: BatchFilter[] = (trainerBatches || [])
             .map((b: any) => ({
               id: b.id || b.batchId,
-              name: b.name || b.batchName,
+              name: b.batchName || b.name,
             }))
             .filter((f: any) => Boolean(f.id && f.name));
 
